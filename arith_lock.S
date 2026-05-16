@@ -18,6 +18,16 @@
 .equ LOCKOUT_SECS,   30
 .equ OPEN_SECS,      5
 
+; Arithmetic button
+.equ STEP_POS_INT0,  2   ; btn_id 1  (PD2)
+.equ STEP_NEG_INT1, -2   ; btn_id 2  (PD3)
+.equ STEP_POS_PD4,   5   ; btn_id 3
+.equ STEP_NEG_PD5,  -5   ; btn_id 4
+.equ STEP_POS_PD6,   7   ; btn_id 5
+.equ STEP_NEG_PD7,  -7   ; btn_id 6
+.equ STEP_POS_PB0,   9   ; btn_id 7
+.equ STEP_NEG_PC0,  -9   ; btn_id 8
+
 ; EEPROM
 .equ EE_TARGET_L,    0x00
 .equ EE_TARGET_H,    0x01
@@ -25,7 +35,7 @@
 .equ EE_LOCKOUT_FL,  0x03 ; 0 = not in lockout, 1 = in lockout
 
 ; !!!TARGET VALUE!!!
-.equ DEFAULT_TARGET, 42
+.equ DEFAULT_TARGET, 97
 
 ; LCD
 .equ LCD_ADDR,       0x27 ; I2C address untuk LCD PCF8574
@@ -65,7 +75,7 @@ lcd_line1:       .skip 17 ; buffer untuk baris pertama LCD
 lcd_line2:       .skip 17 ; buffer untuk baris kedua LCD
 
 
-; ===== Vector Table =======================================================================
+; ===== VECTOR TABLE =======================================================================
 .section .text
 .org 0x0000
 
@@ -209,3 +219,62 @@ INIT_LOCKOUT:
 
 INIT_HALT:
     rjmp INIT_HALT
+
+; ===== EEPROM =======================================================================
+EEPROM_READ_TARGET:
+    ldi  tmp2, EE_TARGET_L
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RT_L_OK
+    ldi  r24, low(DEFAULT_TARGET)
+EE_RT_L_OK:
+    sts  target_val_l, r24
+
+    ldi  tmp2, EE_TARGET_H
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RT_H_OK
+    ldi  r24, high(DEFAULT_TARGET)
+EE_RT_H_OK:
+    sts  target_val_h, r24
+    ret
+
+EEPROM_READ_FAILCNT:
+    ldi  tmp2, EE_FAIL_CNT
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RFC_OK
+    clr  r24
+EE_RFC_OK:
+    sts  fail_count, r24
+    ret
+
+EEPROM_WRITE_FAILCNT:
+    lds  r24, fail_count
+    ldi  tmp2, EE_FAIL_CNT
+    rcall EEPROM_WRITE_BYTE_R24
+    ret
+
+EEPROM_READ_BYTE:
+    sbic EECR, EEPE
+    rjmp EEPROM_READ_BYTE
+    clr  tmp
+    out  EEARH, tmp
+    out  EEARL, tmp2
+    sbi  EECR, EERE
+    in   r24, EEDR
+    ret
+
+EEPROM_WRITE_BYTE_R24:
+EE_WB_WAIT:
+    sbic EECR, EEPE
+    rjmp EE_WB_WAIT
+    clr  tmp
+    out  EEARH, tmp
+    out  EEARL, tmp2
+    out  EEDR, r24
+    cli
+    sbi  EECR, EEMPE
+    sbi  EECR, EEPE
+    sei
+    ret
