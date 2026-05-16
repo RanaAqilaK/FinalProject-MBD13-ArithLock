@@ -41,4 +41,5 @@ Menjadi solusi low-cost yang meningkatkan keamanan keypad tradisional dengan cak
 - [x] ISR handlers (INT0, INT1, Timer2 compare)
 - [x] Polling dan button state machine (input aritmetika, confirm, clear)
 - [x] Enable main runtime loop (ubah INIT_HALT jadi MAIN_LOOP)
+- [x] Refaktor agar konsisten dan dapat dicompile
 - [ ] Verifikasi build dan uji hardware

@@ -3,30 +3,30 @@
 
 ; ===== DEFS =======================================================================
 ; Serial
-.equ F_CPU,          16000000 ; 16 MHz clock
-.equ BAUD,           9600 ; Baud Rate
-.equ UBRR_VAL,       (F_CPU / (16 * BAUD)) - 1  ; 103
+.equ BAUD,            9600      ; Baud Rate
+.equ UBRR_VAL,        103       ; (16000000 / (16*9600)) - 1
 
 ; State value
-.equ STATE_STANDBY,  0
-.equ STATE_INPUT,    1
-.equ STATE_OPEN,     2
-.equ STATE_LOCKOUT,  3
+.equ STATE_STANDBY,   0
+.equ STATE_INPUT,     1
+.equ STATE_OPEN,      2
+.equ STATE_LOCKOUT,   3
 
 ; Security parameters
-.equ MAX_ATTEMPTS,   3
-.equ LOCKOUT_SECS,   30
-.equ OPEN_SECS,      5
+.equ MAX_ATTEMPTS,    3
+.equ LOCKOUT_SECS,    30
+.equ OPEN_SECS,       5
+.equ DEBOUNCE_MS,     50        ; Nilai durasi debounce dalam ms
 
 ; Arithmetic button
-.equ STEP_POS_INT0,  2   ; btn_id 1  (PD2)
-.equ STEP_NEG_INT1, -2   ; btn_id 2  (PD3)
-.equ STEP_POS_PD4,   5   ; btn_id 3
-.equ STEP_NEG_PD5,  -5   ; btn_id 4
-.equ STEP_POS_PD6,   7   ; btn_id 5
-.equ STEP_NEG_PD7,  -7   ; btn_id 6
-.equ STEP_POS_PB0,   9   ; btn_id 7
-.equ STEP_NEG_PC0,  -9   ; btn_id 8
+.equ STEP_POS_INT0,   2   ; btn_id 1  (PD2)
+.equ STEP_NEG_INT1,  -2   ; btn_id 2  (PD3)
+.equ STEP_POS_PD4,    5   ; btn_id 3
+.equ STEP_NEG_PD5,   -5   ; btn_id 4
+.equ STEP_POS_PD6,    7   ; btn_id 5
+.equ STEP_NEG_PD7,   -7   ; btn_id 6
+.equ STEP_POS_PB0,    9   ; btn_id 7
+.equ STEP_NEG_PC0,   -9   ; btn_id 8
 
 ; EEPROM
 .equ EE_TARGET_L,    0x00
@@ -45,17 +45,17 @@
 .equ LCD_RS,         0x01 ; Register Select
 
 ; Servo
-.equ SERVO_LOCKED,   1000 ; 1 ms PWM pulse width(0 degrees) 
-.equ SERVO_OPEN,     2000 ; 2 ms PWM pulse width (180 degrees)
-.equ ICR1_VAL,       20000 ; 20 ms di 50 Hz untuk servo control
+.equ SERVO_LOCKED_POS, 1000 ; 1 ms PWM pulse width(0 degrees) 
+.equ SERVO_OPEN_POS,   2000 ; 2 ms PWM pulse width (180 degrees)
+.equ ICR1_VAL,        20000 ; 20 ms di 50 Hz untuk servo control
 .equ OCR2A_VAL,      249 ; 1 ms pulse width saat 16 MHz dengan prescaler 64
 
 ; Registers
-.def tmp,        r16
-.def tmp2,       r17
-.def state,      r18
-.def btn_flag,   r19 ; 1 = button ditekan, 0 = released
-.def btn_id,     r20 ; 0-7 sesuai pin input
+#define tmp        r16
+#define tmp2       r17
+#define state      r18
+#define btn_flag   r19
+#define btn_id     r20
 
 ; ===== ADDRESS MAP =======================================================================
 .section .bss
@@ -71,12 +71,10 @@ debounce_ms:     .skip 1 ; self-explanatory
 poll_pind_prev:  .skip 1 ; untuk deteksi perubahan tombol
 poll_pinb_prev:  .skip 1 ; untuk deteksi perubahan tombol
 poll_pinc_prev:  .skip 1 ; untuk deteksi perubahan tombol
-lcd_line1:       .skip 17 ; buffer untuk baris pertama LCD
-lcd_line2:       .skip 17 ; buffer untuk baris kedua LCD
-
 
 ; ===== VECTOR TABLE =======================================================================
 .section .text
+
 .org 0x0000
     rjmp RESET          ; 0x00 RESET
 
@@ -86,117 +84,123 @@ lcd_line2:       .skip 17 ; buffer untuk baris kedua LCD
 .org 0x0004
     rjmp ISR_INT1       ; 0x04 INT1 (BTN -2)
 
-.org 0x0024
-    rjmp ISR_T2COMPA    ; 0x24 TIMER2 COMPA (1ms tick)
-
+.org 0x001C
+    rjmp ISR_T2COMPA    ; 0x1C TIMER2 COMPA (1ms tick)
 
 ; ===== RESET / INIT =======================================================================
 RESET:
-    ldi tmp, high(RAMEND) ; Set up stack pointer
-    out SPH, tmp
-    ldi tmp, low(RAMEND) ; Set up stack pointer
-    out SPL, tmp
+    ; Stack pointer
+    ldi  tmp, hi8(RAMEND)
+    out  SPH, tmp
+    ldi  tmp, lo8(RAMEND)
+    out  SPL, tmp
 
-    clr btn_flag
-    clr btn_id
-    ldi state, STATE_STANDBY
+    ; Clear state registers
+    clr  btn_flag                ; btn_flag = 0
+    clr  btn_id                ; btn_id   = 0
+    ldi  state, STATE_STANDBY ; state    = STANDBY
 
-; General Purpose I/O Init
+    ; General Purpose I/O Init
+    ; PD0 RX (UART) - input
+    ; PD1 TX (UART) - output
     ; PD2 and PD3 input with pull-up (buttons)
-    sbi DDRD, 0 ; PD0 RX (UART) - input
-    sbi DDRD, 1 ; PD1 TX (UART) - output
-    cbi DDRD, 2 ; PD2 INT0 - input
-    cbi DDRD, 3 ; PD3 INT1 - input
-    sbi PORTD, 2 ; Pull-up PD2
-    sbi PORTD, 3 ; Pull-up PD3
+    cbi  DDRD, 0
+    sbi  DDRD, 1
+    cbi  DDRD, 2
+    cbi  DDRD, 3
+    sbi  PORTD, 2
+    sbi  PORTD, 3
+    ; PD4-PD7 pull-up input (buttons)
+    cbi  DDRD, 4
+    cbi  DDRD, 5
+    cbi  DDRD, 6
+    cbi  DDRD, 7
+    sbi  PORTD, 4
+    sbi  PORTD, 5
+    sbi  PORTD, 6
+    sbi  PORTD, 7
 
     ; PB0-PB2 pull-up input (buttons)
-    cbi DDRB, 0 ; PB0 - input
-    cbi DDRB, 1 ; PB1 - input
-    cbi DDRB, 2 ; PB2 - input
-    sbi PORTB, 0 ; Pull-up PB0
-    sbi PORTB, 1 ; Pull-up PB1
-    sbi PORTB, 2 ; Pull-up PB2
+    cbi  DDRB, 0
+    sbi  DDRB, 1            ; PB1 OUTPUT (servo OC1A)
+    cbi  DDRB, 2
+    sbi  PORTB, 0
+    sbi  PORTB, 1           ; Pull-up PB1
+    sbi  PORTB, 2
 
     ; PC0-PC5 pull-up input (buttons)
-    cbi DDRC, 0 ; PC0 - input
-    cbi DDRC, 1 ; PC1 - input
-    cbi DDRC, 2 ; PC2 - input
-    cbi DDRC, 3 ; PC3 - input
-    cbi DDRC, 4 ; PC4 - input
-    cbi DDRC, 5 ; PC5 - input
-    sbi PORTC, 0 ; Pull-up PC0
-    sbi PORTC, 1 ; Pull-up PC1
-    sbi PORTC, 2 ; Pull-up PC2
-    sbi PORTC, 3 ; Pull-up PC3
-    sbi PORTC, 4 ; Pull-up PC4
-    sbi PORTC, 5 ; Pull-up PC5
+    cbi  DDRC, 0
+    cbi  DDRC, 1
+    cbi  DDRC, 2
+    sbi  PORTC, 0
+    sbi  PORTC, 1
+    sbi  PORTC, 2
 
-; UART Init
-    ldi tmp, high(UBRR_VAL)
-    sts UBRR0H, tmp
-    ldi tmp, low(UBRR_VAL)
-    sts UBRR0L, tmp
-    ldi tmp, (1<<RXEN0)|(1<<TXEN0)
-    sts UCSR0B, tmp
-    ldi tmp, (1<<UCSZ01)|(1<<UCSZ00)
-    sts UCSR0C, tmp
+    ; UART Init
+    ldi  tmp, hi8(UBRR_VAL)
+    sts  UBRR0H, tmp
+    ldi  tmp, lo8(UBRR_VAL)
+    sts  UBRR0L, tmp
+    ldi  tmp, (1<<RXEN0)|(1<<TXEN0)
+    sts  UCSR0B, tmp
+    ldi  tmp, (1<<UCSZ01)|(1<<UCSZ00)
+    sts  UCSR0C, tmp
 
-; TIMER1 (Servo PWM, 50Hz)
-    ldi tmp, high(ICR1_VAL)
-    sts ICR1H, tmp
-    ldi tmp, low(ICR1_VAL)
-    sts ICR1L, tmp
-    ldi tmp, high(SERVO_LOCKED)
-    sts OCR1AH, tmp
-    ldi tmp, low(SERVO_LOCKED)
-    sts OCR1AL, tmp
-    ldi tmp, (1<<COM1A1)|(1<<WGM11)
-    sts TCCR1A, tmp
-    ldi tmp, (1<<WGM13)|(1<<WGM12)|(1<<CS11)
-    sts TCCR1B, tmp
+    ; TIMER1 (Servo PWM, 50Hz)
+    ldi  tmp, hi8(ICR1_VAL)
+    sts  ICR1H, tmp
+    ldi  tmp, lo8(ICR1_VAL)
+    sts  ICR1L, tmp
+    ldi  tmp, hi8(SERVO_LOCKED_POS)
+    sts  OCR1AH, tmp
+    ldi  tmp, lo8(SERVO_LOCKED_POS)
+    sts  OCR1AL, tmp
+    ldi  tmp, (1<<COM1A1)|(1<<WGM11)
+    sts  TCCR1A, tmp
+    ldi  tmp, (1<<WGM13)|(1<<WGM12)|(1<<CS11)
+    sts  TCCR1B, tmp
 
-; TIMER2 (1 ms tick)
-    ldi tmp, OCR2A_VAL
-    sts OCR2A, tmp
-    ldi tmp, (1<<WGM21)
-    sts TCCR2A, tmp
-    ldi tmp, (1<<CS22)
-    sts TCCR2B, tmp
-    ldi tmp, (1<<OCIE2A)
-    sts TIMSK2, tmp
+    ; TIMER2 (1 ms tick)
+    ldi  tmp, OCR2A_VAL
+    sts  OCR2A, tmp
+    ldi  tmp, (1<<WGM21)
+    sts  TCCR2A, tmp
+    ldi  tmp, (1<<CS22)
+    sts  TCCR2B, tmp
+    ldi  tmp, (1<<OCIE2A)
+    sts  TIMSK2, tmp
 
-; Interrupts Init
-    ldi tmp, (1<<ISC01)|(1<<ISC11)
-    sts EICRA, tmp
-    ldi tmp, (1<<INT0)|(1<<INT1)
-    out EIMSK, tmp
+    ; Interrupts Init
+    ldi  tmp, (1<<ISC01)|(1<<ISC11)
+    sts  EICRA, tmp
+    ldi  tmp, (1<<INT0)|(1<<INT1)
+    out  EIMSK, tmp
 
-; TWI (I2C) Init for LCD
-    ldi tmp, 72
-    sts TWBR, tmp
-    ldi tmp, 0
-    sts TWSR, tmp
-    ldi tmp, (1<<TWEN)
-    sts TWCR, tmp
+    ; TWI (I2C) Init for LCD
+    ldi  tmp, 72
+    sts  TWBR, tmp
+    ldi  tmp, 0
+    sts  TWSR, tmp
+    ldi  tmp, (1<<TWEN)
+    sts  TWCR, tmp
 
-; SRAM INIT - clear all var
-    clr tmp
-    sts current_val_l, tmp
-    sts current_val_h, tmp
-    sts fail_count, tmp
-    sts lockout_secs, tmp
-    sts open_secs, tmp
-    sts ms_tick, tmp
-    sts ms_tick+1, tmp
-    sts debounce_ms, tmp
+    ; SRAM INIT - clear all var
+    clr  tmp
+    sts  current_val_l, tmp
+    sts  current_val_h, tmp
+    sts  fail_count, tmp
+    sts  lockout_secs, tmp
+    sts  open_secs, tmp
+    sts  ms_tick, tmp
+    sts  ms_tick+1, tmp
+    sts  debounce_ms, tmp
 
-    in  tmp, PIND
-    sts poll_pind_prev, tmp
-    in  tmp, PINB
-    sts poll_pinb_prev, tmp
-    in  tmp, PINC
-    sts poll_pinc_prev, tmp
+    in   tmp, PIND
+    sts  poll_pind_prev, tmp
+    in   tmp, PINB
+    sts  poll_pinb_prev, tmp
+    in   tmp, PINC
+    sts  poll_pinc_prev, tmp
 
     rcall EEPROM_READ_TARGET
     rcall EEPROM_READ_FAILCNT
@@ -205,13 +209,13 @@ RESET:
     rcall LCD_INIT
     rcall LCD_CLEAR
 
-    ldi ZL, low(STR_BOOT<<1)
-    ldi ZH, high(STR_BOOT<<1)
+    ldi  ZL, lo8(STR_BOOT)
+    ldi  ZH, hi8(STR_BOOT)
     rcall UART_PRINT_FLASH
 
-    ldi tmp2, EE_LOCKOUT_FL
-    rcall EEPROM_READ_BYTE
-    cpi r24, 0xFF
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_READ_BYTE      ; hasil di r24
+    cpi  r24, 0xFF
     breq INIT_LOCKOUT
 
     rcall SCREEN_STANDBY
@@ -219,53 +223,918 @@ RESET:
     rjmp MAIN_LOOP
 
 INIT_LOCKOUT:
-    ldi state, STATE_LOCKOUT
-    ldi tmp, LOCKOUT_SECS
-    sts lockout_secs, tmp
+    ldi  state, STATE_LOCKOUT
+    ldi  tmp, LOCKOUT_SECS
+    sts  lockout_secs, tmp
     rcall SCREEN_LOCKOUT
     sei
 
+; ===== MAIN LOOP =======================================================================
 MAIN_LOOP:
     rcall POLL_BUTTONS
-    rcall HANDLE_BUTTON
     rcall CHECK_SECOND_TICK
-    rjmp MAIN_LOOP
+    tst   btn_flag                   ; btn_flag
+    breq  MAIN_LOOP
+    clr   btn_flag                   ; clear btn_flag
+    rcall HANDLE_BUTTON
+    rjmp  MAIN_LOOP
 
-; ===== EEPROM =======================================================================
-EEPROM_READ_TARGET:
-    ldi  tmp2, EE_TARGET_L
-    rcall EEPROM_READ_BYTE
-    cpi  r24, 0xFF
-    brne EE_RT_L_OK
-    ldi  r24, low(DEFAULT_TARGET)
-EE_RT_L_OK:
-    sts  target_val_l, r24
+; ===== Interrupts (ISR) =======================================================================
 
-    ldi  tmp2, EE_TARGET_H
-    rcall EEPROM_READ_BYTE
-    cpi  r24, 0xFF
-    brne EE_RT_H_OK
-    ldi  r24, high(DEFAULT_TARGET)
-EE_RT_H_OK:
-    sts  target_val_h, r24
+; INT0 = BTN+2 - PD2
+ISR_INT0:
+    push tmp
+    in   tmp, SREG
+    push tmp
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne INT0_SKIP
+    ldi  tmp, DEBOUNCE_MS
+    sts  debounce_ms, tmp
+    ldi  btn_id, 1                 ; btn_id = 1
+    ldi  btn_flag, 1                 ; btn_flag = 1
+INT0_SKIP:
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
+
+; INT1 = BTN-2 - PD3
+ISR_INT1:
+    push tmp
+    in   tmp, SREG
+    push tmp
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne INT1_SKIP
+    ldi  tmp, DEBOUNCE_MS
+    sts  debounce_ms, tmp
+    ldi  btn_id, 2                 ; btn_id = 2
+    ldi  btn_flag, 1                 ; btn_flag = 1
+INT1_SKIP:
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
+
+; Timer2 Compare Match A 1 ms tick
+ISR_T2COMPA:
+    push tmp
+    in   tmp, SREG
+    push tmp
+
+    ; Debounce countdown
+    lds  tmp, debounce_ms
+    tst  tmp
+    breq T2_SKIP_DEBOUNCE
+    dec  tmp
+    sts  debounce_ms, tmp
+T2_SKIP_DEBOUNCE:
+
+    ; Increment 16-bit ms_tick
+    lds  tmp, ms_tick
+    inc  tmp
+    sts  ms_tick, tmp
+    brne T2_NO_CARRY
+    lds  tmp, ms_tick+1
+    inc  tmp
+    sts  ms_tick+1, tmp
+T2_NO_CARRY:
+
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
+
+; ===== BUTTON POLLING & INPUT ========================================================================
+POLL_BUTTONS:
+    ; Skip jika debounce aktif atau event sudah pending
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne POLL_EXIT
+    tst  btn_flag                    ; btn_flag
+    brne POLL_EXIT
+
+    ; ---- PIND: PD4=+5, PD5=-5, PD6=+7, PD7=-7 ----
+    in   tmp, PIND
+    lds  tmp2, poll_pind_prev
+    sts  poll_pind_prev, tmp    ; simpan state saat ini
+    ; falling = prev & current
+    push tmp
+    com  tmp
+    and  tmp, tmp2               ; tmp = bit yang falling
+    sbrc tmp, 4
+    rjmp POLL_BTN_PD4
+    sbrc tmp, 5
+    rjmp POLL_BTN_PD5
+    sbrc tmp, 6
+    rjmp POLL_BTN_PD6
+    sbrc tmp, 7
+    rjmp POLL_BTN_PD7
+    pop  tmp
+    rjmp POLL_PINB
+
+POLL_BTN_PD4:
+    pop  tmp
+    ldi  btn_id, 3                 ; btn_id = 3 (+5)
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD5:
+    pop  tmp
+    ldi  btn_id, 4                 ; btn_id = 4 (-5)
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD6:
+    pop  tmp
+    ldi  btn_id, 5                 ; btn_id = 5 (+7)
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD7:
+    pop  tmp
+    ldi  btn_id, 6                 ; btn_id = 6 (-7)
+    rjmp POLL_SET_FLAG
+
+    ; ---- PINB: PB0=+9 ----
+POLL_PINB:
+    in   tmp, PINB
+    lds  tmp2, poll_pinb_prev
+    sts  poll_pinb_prev, tmp
+    com  tmp
+    and  tmp, tmp2
+    sbrc tmp, 0
+    rjmp POLL_BTN_PB0
+    rjmp POLL_PINC
+
+POLL_BTN_PB0:
+    ldi  btn_id, 7                 ; btn_id = 7 (+9)
+    rjmp POLL_SET_FLAG
+
+    ; ---- PINC: PC0=-9, PC1=CONFIRM, PC2=CLEAR ----
+POLL_PINC:
+    in   tmp, PINC
+    lds  tmp2, poll_pinc_prev
+    sts  poll_pinc_prev, tmp
+    com  tmp
+    and  tmp, tmp2
+    sbrc tmp, 0
+    rjmp POLL_BTN_PC0
+    sbrc tmp, 1
+    rjmp POLL_BTN_PC1
+    sbrc tmp, 2
+    rjmp POLL_BTN_PC2
     ret
 
-EEPROM_READ_FAILCNT:
-    ldi  tmp2, EE_FAIL_CNT
-    rcall EEPROM_READ_BYTE
-    cpi  r24, 0xFF
-    brne EE_RFC_OK
-    clr  r24
-EE_RFC_OK:
-    sts  fail_count, r24
+POLL_BTN_PC0:
+    ldi  btn_id, 8                 ; btn_id = 8 (-9)
+    rjmp POLL_SET_FLAG
+POLL_BTN_PC1:
+    ldi  btn_id, 9                 ; btn_id = 9 (CONFIRM)
+    rjmp POLL_SET_FLAG
+POLL_BTN_PC2:
+    ldi  btn_id, 10                ; btn_id = 10 (CLEAR)
+
+POLL_SET_FLAG:
+    ldi  tmp, DEBOUNCE_MS
+    sts  debounce_ms, tmp
+    ldi  btn_flag, 1                 ; btn_flag = 1
+
+POLL_EXIT:
     ret
 
-EEPROM_WRITE_FAILCNT:
-    lds  r24, fail_count
-    ldi  tmp2, EE_FAIL_CNT
+; ===== HANDLE_BUTTON & STATE MACHINE ========================================================================
+HANDLE_BUTTON:
+    cpi  state, STATE_STANDBY
+    brne HB_CHK_INPUT
+    ; Transisi STANDBY -> INPUT, reset nilai
+    ldi  state, STATE_INPUT
+    clr  tmp
+    sts  current_val_l, tmp
+    sts  current_val_h, tmp
+    rcall SCREEN_INPUT
+    rjmp HB_DO_ARITH
+
+HB_CHK_INPUT:
+    cpi  state, STATE_INPUT
+    brne HB_CHK_OPEN
+    rjmp HB_DO_ARITH
+
+HB_CHK_OPEN:
+    cpi  state, STATE_OPEN
+    brne HB_LOCKOUT_CHK
+    ; Di state OPEN hanya CLEAR yang diproses
+    cpi  btn_id, 10                ; btn_id == CLEAR?
+    breq HB_DO_CLEAR
+    ret
+
+HB_LOCKOUT_CHK:
+    ; STATE_LOCKOUT: abaikan semua input
+    ret
+
+HB_DO_ARITH:
+    cpi  btn_id, 9                 ; CONFIRM?
+    breq HB_DO_CONFIRM
+    cpi  btn_id, 10                ; CLEAR?
+    breq HB_DO_CLEAR
+
+    ; Tentukan delta berdasarkan btn_id (btn_id)
+    ldi  r24, 0
+    ldi  r25, 0
+
+    cpi  btn_id, 1
+    brne HB_CHK2
+    ldi  r24, lo8(STEP_POS_INT0)    ; +2
+    ldi  r25, hi8(STEP_POS_INT0)
+    rjmp HB_ADD_DELTA
+
+HB_CHK2:
+    cpi  btn_id, 2
+    brne HB_CHK3
+    ldi  r24, lo8(STEP_NEG_INT1)    ; -2
+    ldi  r25, hi8(STEP_NEG_INT1)
+    rjmp HB_ADD_DELTA
+
+HB_CHK3:
+    cpi  btn_id, 3
+    brne HB_CHK4
+    ldi  r24, lo8(STEP_POS_PD4)     ; +5
+    ldi  r25, hi8(STEP_POS_PD4)
+    rjmp HB_ADD_DELTA
+
+HB_CHK4:
+    cpi  btn_id, 4
+    brne HB_CHK5
+    ldi  r24, lo8(STEP_NEG_PD5)     ; -5
+    ldi  r25, hi8(STEP_NEG_PD5)
+    rjmp HB_ADD_DELTA
+
+HB_CHK5:
+    cpi  btn_id, 5
+    brne HB_CHK6
+    ldi  r24, lo8(STEP_POS_PD6)     ; +7
+    ldi  r25, hi8(STEP_POS_PD6)
+    rjmp HB_ADD_DELTA
+
+HB_CHK6:
+    cpi  btn_id, 6
+    brne HB_CHK7
+    ldi  r24, lo8(STEP_NEG_PD7)     ; -7
+    ldi  r25, hi8(STEP_NEG_PD7)
+    rjmp HB_ADD_DELTA
+
+HB_CHK7:
+    cpi  btn_id, 7
+    brne HB_CHK8
+    ldi  r24, lo8(STEP_POS_PB0)     ; +9
+    ldi  r25, hi8(STEP_POS_PB0)
+    rjmp HB_ADD_DELTA
+
+HB_CHK8:
+    cpi  btn_id, 8
+    brne HB_DO_ARITH_END
+    ldi  r24, lo8(STEP_NEG_PC0)     ; -9
+    ldi  r25, hi8(STEP_NEG_PC0)
+
+HB_ADD_DELTA:
+    lds  r22, current_val_l
+    lds  r23, current_val_h
+    add  r22, r24
+    adc  r23, r25
+    sts  current_val_l, r22
+    sts  current_val_h, r23
+    rcall SCREEN_INPUT
+    rcall LOG_BTN_PRESS
+
+HB_DO_ARITH_END:
+    ret
+
+HB_DO_CONFIRM:
+    ; Bandingkan current_val == target_val
+    lds  r22, current_val_l
+    lds  r23, current_val_h
+    lds  r24, target_val_l
+    lds  r25, target_val_h
+    cp   r22, r24
+    cpc  r23, r25
+    brne HB_WRONG
+
+    ; === BENAR ===
+    clr  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    clr  r24                    ; tulis 0 ke EE_LOCKOUT_FL
+    ldi  tmp2, EE_LOCKOUT_FL
     rcall EEPROM_WRITE_BYTE_R24
+    rcall SERVO_OPEN
+    ldi  state, STATE_OPEN
+    ldi  tmp, OPEN_SECS
+    sts  open_secs, tmp
+    clr  tmp
+    sts  ms_tick,   tmp
+    sts  ms_tick+1, tmp
+    rcall SCREEN_OPEN
+    rcall LOG_SUCCESS
     ret
 
+HB_WRONG:
+    lds  tmp, fail_count
+    inc  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    rcall LOG_FAIL
+    cpi  tmp, MAX_ATTEMPTS
+    brsh HB_LOCKOUT
+    rcall SCREEN_WRONG
+    rcall DELAY_1S
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+
+HB_LOCKOUT:
+    ldi  r24, 0xFF
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_WRITE_BYTE_R24
+    ldi  state, STATE_LOCKOUT
+    ldi  tmp, LOCKOUT_SECS
+    sts  lockout_secs, tmp
+    clr  tmp
+    sts  ms_tick,   tmp
+    sts  ms_tick+1, tmp
+    rcall SCREEN_LOCKOUT
+    rcall LOG_LOCKOUT
+    ret
+
+HB_DO_CLEAR:
+    clr  tmp
+    sts  current_val_l, tmp
+    sts  current_val_h, tmp
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+
+; ===== CHECK_SECOND_TICK ====================================================================
+CHECK_SECOND_TICK:
+    cli
+    lds  r24, ms_tick
+    lds  r25, ms_tick+1
+    sei
+    ; Bandingkan ms_tick >= 1000
+    cpi  r24, lo8(1000)
+    ldi  tmp, hi8(1000)
+    cpc  r25, tmp
+    brlo CST_EXIT
+
+    ; Reset counter
+    clr  tmp
+    cli
+    sts  ms_tick,   tmp
+    sts  ms_tick+1, tmp
+    sei
+
+    cpi  state, STATE_OPEN
+    breq CST_OPEN
+    cpi  state, STATE_LOCKOUT
+    breq CST_LOCKOUT
+    ret
+
+CST_OPEN:
+    lds  tmp, open_secs
+    dec  tmp
+    sts  open_secs, tmp
+    tst  tmp
+    brne CST_OPEN_UPDATE
+    ; Waktu habis -> tutup
+    rcall SERVO_CLOSE
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    rcall LOG_CLOSE
+    ret
+CST_OPEN_UPDATE:
+    rcall SCREEN_OPEN
+    ret
+
+CST_LOCKOUT:
+    lds  tmp, lockout_secs
+    dec  tmp
+    sts  lockout_secs, tmp
+    tst  tmp
+    brne CST_LOCK_UPDATE
+    ; Lockout selesai -> reset
+    clr  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    clr  r24
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_WRITE_BYTE_R24
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+CST_LOCK_UPDATE:
+    rcall SCREEN_LOCKOUT
+CST_EXIT:
+    ret
+
+; ===== SERVO ========================================================================
+SERVO_OPEN:
+    ldi  tmp, hi8(SERVO_OPEN_POS)
+    sts  OCR1AH, tmp
+    ldi  tmp, lo8(SERVO_OPEN_POS)
+    sts  OCR1AL, tmp
+    ret
+
+SERVO_CLOSE:
+    ldi  tmp, hi8(SERVO_LOCKED_POS)
+    sts  OCR1AH, tmp
+    ldi  tmp, lo8(SERVO_LOCKED_POS)
+    sts  OCR1AL, tmp
+    ret
+
+; ===== LCD/TWI ======================================================================
+TWI_START:
+    ldi  tmp, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
+    sts  TWCR, tmp
+TWI_WAIT_S:
+    lds  tmp, TWCR
+    sbrs tmp, TWINT
+    rjmp TWI_WAIT_S
+    ret
+
+TWI_STOP:
+    ldi  tmp, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+    sts  TWCR, tmp
+    ret
+
+TWI_WRITE:
+    sts  TWDR, r24
+    ldi  tmp, (1<<TWINT)|(1<<TWEN)
+    sts  TWCR, tmp
+TWI_WAIT_W:
+    lds  tmp, TWCR
+    sbrs tmp, TWINT
+    rjmp TWI_WAIT_W
+    lds  r25, TWSR
+    andi r25, 0xF8
+    ret
+
+LCD_SEND_RAW:
+    push r24
+    rcall TWI_START
+    ldi  r24, (LCD_ADDR<<1)
+    rcall TWI_WRITE
+    pop  r24
+    ori  r24, LCD_BL            ; backlight always on
+    rcall TWI_WRITE
+    rcall TWI_STOP
+    ret
+
+; Pulse EN: send r24 with EN=1 then EN=0
+LCD_PULSE_EN:
+    push r24
+    ori  r24, LCD_EN
+    rcall LCD_SEND_RAW
+    rcall DELAY_1US_x5
+    pop  r24
+    andi r24, 0xFB              ; clear EN
+    rcall LCD_SEND_RAW
+    rcall DELAY_1US_x5
+    ret
+
+; Send nibble: upper 4-bit r24 as data, r23 bit0 = RS
+LCD_SEND_NIBBLE:
+    push r24
+    push r23
+    andi r24, 0xF0
+    andi r23, 0x01
+    or   r24, r23
+    rcall LCD_PULSE_EN
+    pop  r23
+    pop  r24
+    ret
+
+; Send full byte to LCD: r24=data, r23=RS (0=cmd, 1=data char)
+LCD_SEND_BYTE:
+    push r24
+    push r23
+    rcall LCD_SEND_NIBBLE       ; high nibble first
+    pop  r23
+    pop  r24
+    push r24
+    push r23
+    swap r24                    ; move low nibble to upper position
+    andi r24, 0xF0
+    andi r23, 0x01
+    or   r24, r23
+    rcall LCD_PULSE_EN          ; send low nibble
+    pop  r23
+    pop  r24
+    rcall DELAY_50US
+    ret
+
+LCD_CMD:
+    clr  r23
+    rcall LCD_SEND_BYTE
+    ret
+
+LCD_DATA:
+    ldi  r23, 1
+    rcall LCD_SEND_BYTE
+    ret
+
+; Inisialisasi LCD
+LCD_INIT:
+    rcall DELAY_50MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_5MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_5MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_1MS
+    ldi  r24, 0x20
+    rcall LCD_PULSE_EN
+    rcall DELAY_1MS
+    ldi  r24, 0x28
+    rcall LCD_CMD
+    ldi  r24, 0x0C
+    rcall LCD_CMD
+    ldi  r24, 0x06
+    rcall LCD_CMD
+    ret
+
+LCD_CLEAR:
+    ldi  r24, 0x01
+    rcall LCD_CMD
+    rcall DELAY_2MS
+    ret
+
+LCD_SET_CURSOR:
+    cpi  r24, 1
+    brne LCD_SET_ROW0
+    ori  r25, 0x40
+LCD_SET_ROW0:
+    ori  r25, 0x80
+    mov  r24, r25
+    rcall LCD_CMD
+    ret
+
+LCD_PRINT_FLASH:
+LCD_PRINT_FLASH_LOOP:
+    lpm  r24, Z+
+    tst  r24
+    breq LCD_PRINT_FLASH_END
+    rcall LCD_DATA
+    rjmp LCD_PRINT_FLASH_LOOP
+LCD_PRINT_FLASH_END:
+    ret
+
+LCD_PRINT_SRAM:
+LCD_PRINT_SRAM_LOOP:
+    ld   r24, Z+
+    tst  r24
+    breq LCD_PRINT_SRAM_END
+    rcall LCD_DATA
+    rjmp LCD_PRINT_SRAM_LOOP
+LCD_PRINT_SRAM_END:
+    ret
+
+; ===== SCREEN FUNC ==============================================================
+SCREEN_STANDBY:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_STANDBY1)
+    ldi  ZH, hi8(STR_STANDBY1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_STANDBY2)
+    ldi  ZH, hi8(STR_STANDBY2)
+    rcall LCD_PRINT_FLASH
+    ret
+
+SCREEN_INPUT:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_VAL)
+    ldi  ZH, hi8(STR_VAL)
+    rcall LCD_PRINT_FLASH
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    rcall LCD_PRINT_INT16
+
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_DIST)
+    ldi  ZH, hi8(STR_DIST)
+    rcall LCD_PRINT_FLASH
+
+    lds  r22, target_val_l
+    lds  r23, target_val_h
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    sub  r22, r24
+    sbc  r23, r25
+    tst  r23
+    brpl SI_POS
+    com  r22
+    com  r23
+    ldi  tmp, 1
+    add  r22, tmp
+    clr  tmp
+    adc  r23, tmp
+SI_POS:
+    mov  r24, r22
+    mov  r25, r23
+    rcall LCD_PRINT_INT16
+    ret
+
+SCREEN_OPEN:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_OPEN1)
+    ldi  ZH, hi8(STR_OPEN1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_OPEN2)
+    ldi  ZH, hi8(STR_OPEN2)
+    rcall LCD_PRINT_FLASH
+    lds  r24, open_secs
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ldi  r24, 's'
+    rcall LCD_DATA
+    ret
+
+SCREEN_WRONG:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_WRONG1)
+    ldi  ZH, hi8(STR_WRONG1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_WRONG2)
+    ldi  ZH, hi8(STR_WRONG2)
+    rcall LCD_PRINT_FLASH
+    ldi  tmp, MAX_ATTEMPTS
+    lds  r24, fail_count
+    sub  tmp, r24
+    mov  r24, tmp
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ret
+
+SCREEN_LOCKOUT:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_LOCK1)
+    ldi  ZH, hi8(STR_LOCK1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, lo8(STR_LOCK2)
+    ldi  ZH, hi8(STR_LOCK2)
+    rcall LCD_PRINT_FLASH
+    lds  r24, lockout_secs
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ldi  r24, 's'
+    rcall LCD_DATA
+    ret
+
+# ===== UTILS =======================================================================
+LCD_PRINT_INT16:
+    push tmp
+    push tmp2
+    push state
+    push btn_flag
+    push btn_id
+    push r21
+
+    mov  btn_id, r24
+    mov  r21, r25
+
+    tst  r21
+    brpl PI16_POS
+    ldi  r24, '-'
+    rcall LCD_DATA
+    com  btn_id
+    com  r21
+    ldi  r24, 1
+    add  btn_id, r24
+    clr  r24
+    adc  r21, r24
+
+PI16_POS:
+    clr  tmp
+
+    tst  btn_id
+    brne PI16_DIVLOOP
+    tst  r21
+    brne PI16_DIVLOOP
+    ldi  r24, '0'
+    rcall LCD_DATA
+    rjmp PI16_DONE
+
+PI16_DIVLOOP:
+    rcall DIV16_BY10
+    ldi  r24, '0'
+    add  r24, state
+    push r24
+    inc  tmp
+    tst  btn_id
+    brne PI16_DIVLOOP
+    tst  r21
+    brne PI16_DIVLOOP
+
+PI16_PRINT:
+    tst  tmp
+    breq PI16_DONE
+    pop  r24
+    rcall LCD_DATA
+    dec  tmp
+    rjmp PI16_PRINT
+
+PI16_DONE:
+    pop  r21
+    pop  btn_id
+    pop  btn_flag
+    pop  state
+    pop  tmp2
+    pop  tmp
+    ret
+
+; Div r21:btn_id by 10 (unsigned)
+; Result: r21:btn_id = quotient, state = remainder
+DIV16_BY10:
+    push r22
+    push r23
+    clr  state
+    ldi  r22, 16
+DIV10_LOOP:
+    lsl  btn_id
+    rol  r21
+    rol  state
+    cpi  state, 10
+    brlo DIV10_NOSUB
+    subi state, 10
+    ori  btn_id, 1
+DIV10_NOSUB:
+    dec  r22
+    brne DIV10_LOOP
+    pop  r23
+    pop  r22
+    ret
+
+# ===== UART ========================================================================
+UART_TX:
+    lds  tmp, UCSR0A
+    sbrs tmp, UDRE0
+    rjmp UART_TX
+    sts  UDR0, r24
+    ret
+
+UART_PRINT_FLASH:
+    lpm  r24, Z+
+    tst  r24
+    breq UART_PRINT_FLASH_END
+    rcall UART_TX
+    rjmp UART_PRINT_FLASH
+UART_PRINT_FLASH_END:
+    ret
+
+UART_PRINT_SRAM:
+    ld   r24, Z+
+    tst  r24
+    breq UART_PRINT_SRAM_END
+    rcall UART_TX
+    rjmp UART_PRINT_SRAM
+UART_PRINT_SRAM_END:
+    ret
+
+; Print signed 16-bit r25:r24 via UART
+UART_PRINT_INT16:
+    push state
+    push btn_id
+    push r21
+    push tmp
+    mov  btn_id, r24
+    mov  r21, r25
+    tst  r21
+    brpl UART_PI16_POS
+    ldi  r24, '-'
+    rcall UART_TX
+    com  btn_id
+    com  r21
+    ldi  r24, 1
+    add  btn_id, r24
+    clr  r24
+    adc  r21, r24
+UART_PI16_POS:
+    clr  tmp
+    tst  btn_id
+    brne UART_PI16_LOOP
+    tst  r21
+    brne UART_PI16_LOOP
+    ldi  r24, '0'
+    rcall UART_TX
+    pop  tmp
+    pop  r21
+    pop  btn_id
+    pop  state
+    ret
+UART_PI16_LOOP:
+    rcall DIV16_BY10
+    ldi  r24, '0'
+    add  r24, state
+    push r24
+    inc  tmp
+    tst  btn_id
+    brne UART_PI16_LOOP
+    tst  r21
+    brne UART_PI16_LOOP
+UART_PI16_PRINT:
+    tst  tmp
+    breq UART_PI16_DONE
+    pop  r24
+    rcall UART_TX
+    dec  tmp
+    rjmp UART_PI16_PRINT
+UART_PI16_DONE:
+    pop  tmp
+    pop  r21
+    pop  btn_id
+    pop  state
+    ret
+
+UART_CRLF:
+    ldi  r24, '\r'
+    rcall UART_TX
+    ldi  r24, '\n'
+    rcall UART_TX
+    ret
+
+# ===== LOGGING =======================================================================
+LOG_BTN_PRESS:
+    ldi  ZL, lo8(STR_LOG_BTN)
+    ldi  ZH, hi8(STR_LOG_BTN)
+    rcall UART_PRINT_FLASH
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    rcall UART_PRINT_INT16
+    rcall UART_CRLF
+    ret
+
+LOG_SUCCESS:
+    ldi  ZL, lo8(STR_LOG_OK)
+    ldi  ZH, hi8(STR_LOG_OK)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
+
+LOG_FAIL:
+    ldi  ZL, lo8(STR_LOG_FAIL)
+    ldi  ZH, hi8(STR_LOG_FAIL)
+    rcall UART_PRINT_FLASH
+    lds  r24, fail_count
+    clr  r25
+    rcall UART_PRINT_INT16
+    ldi  r24, '/'
+    rcall UART_TX
+    ldi  r24, MAX_ATTEMPTS
+    clr  r25
+    rcall UART_PRINT_INT16
+    rcall UART_CRLF
+    ret
+
+LOG_LOCKOUT:
+    ldi  ZL, lo8(STR_LOG_LOCK)
+    ldi  ZH, hi8(STR_LOG_LOCK)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
+
+LOG_CLOSE:
+    ldi  ZL, lo8(STR_LOG_CLOSE)
+    ldi  ZH, hi8(STR_LOG_CLOSE)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
+
+# ===== EEPROM =======================================================================
 EEPROM_READ_BYTE:
     sbic EECR, EEPE
     rjmp EEPROM_READ_BYTE
@@ -283,14 +1152,49 @@ EE_WB_WAIT:
     clr  tmp
     out  EEARH, tmp
     out  EEARL, tmp2
-    out  EEDR, r24
+    out  EEDR,  r24
     cli
     sbi  EECR, EEMPE
     sbi  EECR, EEPE
     sei
     ret
 
-; ===== Delay ========================================================================
+EEPROM_READ_TARGET:
+    ldi  tmp2, EE_TARGET_L
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RT_L_OK
+    ldi  r24, lo8(DEFAULT_TARGET)
+EE_RT_L_OK:
+    sts  target_val_l, r24
+
+    ldi  tmp2, EE_TARGET_H
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RT_H_OK
+    ldi  r24, hi8(DEFAULT_TARGET)
+EE_RT_H_OK:
+    sts  target_val_h, r24
+    ret
+
+; Load fail count dari EEPROM
+EEPROM_READ_FAILCNT:
+    ldi  tmp2, EE_FAIL_CNT
+    rcall EEPROM_READ_BYTE
+    cpi  r24, 0xFF
+    brne EE_RFC_OK
+    clr  r24
+EE_RFC_OK:
+    sts  fail_count, r24
+    ret
+
+EEPROM_WRITE_FAILCNT:
+    lds  r24, fail_count
+    ldi  tmp2, EE_FAIL_CNT
+    rcall EEPROM_WRITE_BYTE_R24
+    ret
+
+# ===== Delay ========================================================================
 DELAY_1US_x5:
     ldi  tmp, 26
 DLY_1US5_LOOP:
@@ -308,9 +1212,9 @@ DLY_50US_LOOP:
 DELAY_1MS:
     ldi  r21, 255
 DLY_1MS_LOOP:
-    ldi  r20, 31
+    ldi  btn_id, 31
 DLY_1MS_INNER:
-    dec  r20
+    dec  btn_id
     brne DLY_1MS_INNER
     dec  r21
     brne DLY_1MS_LOOP
@@ -356,7 +1260,7 @@ STR_STANDBY1: .asciz "  ARITH  LOCK  "
 STR_STANDBY2: .asciz " Press any key "
 STR_VAL:      .asciz "Val: "
 STR_DIST:     .asciz "Dist:"
-STR_OPEN1:    .asciz "*** OPEN ***   "
+STR_OPEN1:    .asciz "*** OPEN *** "
 STR_OPEN2:    .asciz "Closing in: "
 STR_WRONG1:   .asciz "!! WRONG VALUE  "
 STR_WRONG2:   .asciz "Attempts left: "
@@ -368,873 +1272,4 @@ STR_LOG_FAIL: .asciz "[AUTH] FAIL attempt "
 STR_LOG_LOCK: .asciz "[AUTH] LOCKOUT TRIGGERED"
 STR_LOG_CLOSE:.asciz "[DOOR] CLOSED"
 
-
-; ===== SERVO ========================================================================
-SERVO_OPEN:
-    ldi  tmp, high(SERVO_OPEN)
-    sts  OCR1AH, tmp
-    ldi  tmp, low(SERVO_OPEN)
-    sts  OCR1AL, tmp
-    ret
-
-SERVO_CLOSE:
-    ldi  tmp, high(SERVO_LOCKED)
-    sts  OCR1AH, tmp
-    ldi  tmp, low(SERVO_LOCKED)
-    sts  OCR1AL, tmp
-    ret
-
-; ===== LCD/TWI ======================================================================
-TWI_START:
-    ldi  tmp, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
-    sts  TWCR, tmp
-TWI_WAIT_S:
-    lds  tmp, TWCR
-    sbrs tmp, TWINT
-    rjmp TWI_WAIT_S
-    ret
-
-TWI_STOP:
-    ldi  tmp, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
-    sts  TWCR, tmp
-    ret
-
-TWI_WRITE:
-    sts  TWDR, r24
-    ldi  tmp, (1<<TWINT)|(1<<TWEN)
-    sts  TWCR, tmp
-TWI_WAIT_W:
-    lds  tmp, TWCR
-    sbrs tmp, TWINT
-    rjmp TWI_WAIT_W
-    lds  r25, TWSR
-    andi r25, 0xF8
-    ret
-
-LCD_SEND_RAW:
-    push r24
-    rcall TWI_START
-    ldi  r24, (LCD_ADDR<<1)
-    rcall TWI_WRITE
-    pop  r24
-    ori  r24, LCD_BL
-    rcall TWI_WRITE
-    rcall TWI_STOP
-    ret
-
-LCD_PULSE_EN:
-    push r24
-    ori  r24, LCD_EN
-    rcall LCD_SEND_RAW
-    rcall DELAY_1US_x5
-    pop  r24
-    andi r24, 0xFB
-    rcall LCD_SEND_RAW
-    rcall DELAY_1US_x5
-    ret
-
-LCD_SEND_NIBBLE:
-    push r24
-    push r23
-    andi r24, 0xF0
-    andi r23, 0x01
-    or   r24, r23
-    rcall LCD_PULSE_EN
-    pop  r23
-    pop  r24
-    ret
-
-LCD_SEND_BYTE:
-    push r24
-    push r23
-    rcall LCD_SEND_NIBBLE
-    pop  r23
-    pop  r24
-    push r24
-    push r23
-    swap r24
-    andi r24, 0xF0
-    andi r23, 0x01
-    or   r24, r23
-    rcall LCD_PULSE_EN
-    pop  r23
-    pop  r24
-    rcall DELAY_50US
-    ret
-
-LCD_CMD:
-    clr  r23
-    rcall LCD_SEND_BYTE
-    ret
-
-LCD_DATA:
-    ldi  r23, 1
-    rcall LCD_SEND_BYTE
-    ret
-
-LCD_INIT:
-    rcall DELAY_50MS
-    ldi  r24, 0x30
-    rcall LCD_PULSE_EN
-    rcall DELAY_5MS
-    ldi  r24, 0x30
-    rcall LCD_PULSE_EN
-    rcall DELAY_5MS
-    ldi  r24, 0x30
-    rcall LCD_PULSE_EN
-    rcall DELAY_1MS
-    ldi  r24, 0x20
-    rcall LCD_PULSE_EN
-    rcall DELAY_1MS
-    ldi  r24, 0x28
-    rcall LCD_CMD
-    ldi  r24, 0x0C
-    rcall LCD_CMD
-    ldi  r24, 0x06
-    rcall LCD_CMD
-    ret
-
-LCD_CLEAR:
-    ldi  r24, 0x01
-    rcall LCD_CMD
-    rcall DELAY_2MS
-    ret
-
-LCD_SET_CURSOR:
-    cpi  r24, 1
-    brne LCD_SET_ROW0
-    ori  r25, 0x40
-LCD_SET_ROW0:
-    ori  r25, 0x80
-    mov  r24, r25
-    rcall LCD_CMD
-    ret
-
-LCD_PRINT_SRAM:
-LCD_PRINT_SRAM_LOOP:
-    ld   r24, Z+
-    tst  r24
-    breq LCD_PRINT_SRAM_END
-    rcall LCD_DATA
-    rjmp LCD_PRINT_SRAM_LOOP
-LCD_PRINT_SRAM_END:
-    ret
-
-LCD_PRINT_FLASH:
-LCD_PRINT_FLASH_LOOP:
-    lpm  r24, Z+
-    tst  r24
-    breq LCD_PRINT_FLASH_END
-    rcall LCD_DATA
-    rjmp LCD_PRINT_FLASH_LOOP
-LCD_PRINT_FLASH_END:
-    ret
-
-; ===== SCREEN FUNC ==============================================================
-SCREEN_STANDBY:
-    rcall LCD_CLEAR
-    ldi  ZL, low(STR_STANDBY1<<1)
-    ldi  ZH, high(STR_STANDBY1<<1)
-    clr  r24
-    clr  r25
-    rcall LCD_SET_CURSOR
-    rcall LCD_PRINT_FLASH
-    ldi  ZL, low(STR_STANDBY2<<1)
-    ldi  ZH, high(STR_STANDBY2<<1)
-    ldi  r24, 1
-    clr  r25
-    rcall LCD_SET_CURSOR
-    rcall LCD_PRINT_FLASH
-    ret
-
-SCREEN_INPUT:
-    rcall LCD_CLEAR
-    clr  r24
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_VAL<<1)
-    ldi  ZH, high(STR_VAL<<1)
-    rcall LCD_PRINT_FLASH
-    lds  r24, current_val_l
-    lds  r25, current_val_h
-    rcall LCD_PRINT_INT16
-
-    ldi  r24, 1
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_DIST<<1)
-    ldi  ZH, high(STR_DIST<<1)
-    rcall LCD_PRINT_FLASH
-
-    lds  r22, target_val_l
-    lds  r23, target_val_h
-    lds  r24, current_val_l
-    lds  r25, current_val_h
-    sub  r22, r24
-    sbc  r23, r25
-    tst  r23
-    brpl SI_POS
-    com  r22
-    com  r23
-    ldi  tmp, 1
-    add  r22, tmp
-    adc  r23, r25
-SI_POS:
-    mov  r24, r22
-    mov  r25, r23
-    rcall LCD_PRINT_INT16
-    ret
-
-SCREEN_OPEN:
-    rcall LCD_CLEAR
-    clr  r24
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_OPEN1<<1)
-    ldi  ZH, high(STR_OPEN1<<1)
-    rcall LCD_PRINT_FLASH
-    ldi  r24, 1
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_OPEN2<<1)
-    ldi  ZH, high(STR_OPEN2<<1)
-    rcall LCD_PRINT_FLASH
-    lds  r24, open_secs
-    clr  r25
-    rcall LCD_PRINT_INT16
-    ldi  r24, 's'
-    rcall LCD_DATA
-    ret
-
-SCREEN_WRONG:
-    rcall LCD_CLEAR
-    clr  r24
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_WRONG1<<1)
-    ldi  ZH, high(STR_WRONG1<<1)
-    rcall LCD_PRINT_FLASH
-    ldi  r24, 1
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_WRONG2<<1)
-    ldi  ZH, high(STR_WRONG2<<1)
-    rcall LCD_PRINT_FLASH
-    ldi  tmp, MAX_ATTEMPTS
-    lds  r24, fail_count
-    sub  tmp, r24
-    mov  r24, tmp
-    clr  r25
-    rcall LCD_PRINT_INT16
-    ret
-
-SCREEN_LOCKOUT:
-    rcall LCD_CLEAR
-    clr  r24
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_LOCK1<<1)
-    ldi  ZH, high(STR_LOCK1<<1)
-    rcall LCD_PRINT_FLASH
-    ldi  r24, 1
-    clr  r25
-    rcall LCD_SET_CURSOR
-    ldi  ZL, low(STR_LOCK2<<1)
-    ldi  ZH, high(STR_LOCK2<<1)
-    rcall LCD_PRINT_FLASH
-    lds  r24, lockout_secs
-    clr  r25
-    rcall LCD_PRINT_INT16
-    ldi  r24, 's'
-    rcall LCD_DATA
-    ret
-
-; ===== UTILS =======================================================================
-LCD_PRINT_INT16:
-    push r16
-    push r17
-    push r18
-    push r19
-    push r20
-    push r21
-
-    mov  r20, r24
-    mov  r21, r25
-
-    tst  r21
-    brpl PI16_POS
-    ldi  r24, '-'
-    rcall LCD_DATA
-    com  r20
-    com  r21
-    ldi  r24, 1
-    add  r20, r24
-    clr  r24
-    adc  r21, r24
-
-PI16_POS:
-    clr  r16
-    ldi  r17, 0
-
-    tst  r20
-    brne PI16_DIVLOOP
-    tst  r21
-    brne PI16_DIVLOOP
-    ldi  r24, '0'
-    rcall LCD_DATA
-    rjmp PI16_DONE
-
-PI16_DIVLOOP:
-    rcall DIV16_BY10
-    ldi  r24, '0'
-    add  r24, r18
-    push r24
-    inc  r16
-    tst  r20
-    brne PI16_DIVLOOP
-    tst  r21
-    brne PI16_DIVLOOP
-
-PI16_PRINT:
-    tst  r16
-    breq PI16_DONE
-    pop  r24
-    rcall LCD_DATA
-    dec  r16
-    rjmp PI16_PRINT
-
-PI16_DONE:
-    pop  r21
-    pop  r20
-    pop  r19
-    pop  r18
-    pop  r17
-    pop  r16
-    ret
-
-; Div r21:r20 by 10 (unsigned)
-; Result: r21:r20 = quotient, r18 = remainder
-DIV16_BY10:
-    push r22
-    push r23
-    clr  r18
-    ldi  r22, 16
-DIV10_LOOP:
-    lsl  r20
-    rol  r21
-    rol  r18
-    cpi  r18, 10
-    brlo DIV10_NOSUB
-    subi r18, 10
-    ori  r20, 1
-DIV10_NOSUB:
-    dec  r22
-    brne DIV10_LOOP
-    pop  r23
-    pop  r22
-    ret
-
-; ===== UART ========================================================================
-UART_TX:
-    lds  tmp, UCSR0A
-    sbrs tmp, UDRE0
-    rjmp UART_TX
-    sts  UDR0, r24
-    ret
-
-UART_PRINT_FLASH:
-    lpm  r24, Z+
-    tst  r24
-    breq UART_PRINT_FLASH_END
-    rcall UART_TX
-    rjmp UART_PRINT_FLASH
-UART_PRINT_FLASH_END:
-    ret
-
-UART_PRINT_SRAM:
-    ld   r24, Z+
-    tst  r24
-    breq UART_PRINT_SRAM_END
-    rcall UART_TX
-    rjmp UART_PRINT_SRAM
-UART_PRINT_SRAM_END:
-    ret
-
-UART_PRINT_INT16:
-    push r20
-    push r21
-    push r16
-    mov  r20, r24
-    mov  r21, r25
-    tst  r21
-    brpl UART_PI16_POS
-    ldi  r24, '-'
-    rcall UART_TX
-    com  r20
-    com  r21
-    ldi  r24, 1
-    add  r20, r24
-    clr  r24
-    adc  r21, r24
-UART_PI16_POS:
-    clr  r16
-    tst  r20
-    brne UART_PI16_LOOP
-    tst  r21
-    brne UART_PI16_LOOP
-    ldi  r24, '0'
-    rcall UART_TX
-    pop  r16
-    pop  r21
-    pop  r20
-    ret
-UART_PI16_LOOP:
-    rcall DIV16_BY10
-    ldi  r24, '0'
-    add  r24, r18
-    push r24
-    inc  r16
-    tst  r20
-    brne UART_PI16_LOOP
-    tst  r21
-    brne UART_PI16_LOOP
-UART_PI16_PRINT:
-    tst  r16
-    breq UART_PI16_DONE
-    pop  r24
-    rcall UART_TX
-    dec  r16
-    rjmp UART_PI16_PRINT
-UART_PI16_DONE:
-    pop  r16
-    pop  r21
-    pop  r20
-    ret
-
-UART_CRLF:
-    ldi  r24, '\r'
-    rcall UART_TX
-    ldi  r24, '\n'
-    rcall UART_TX
-    ret
-
-; ===== LOGGING =======================================================================
-LOG_BTN_PRESS:
-    ldi  ZL, low(STR_LOG_BTN<<1)
-    ldi  ZH, high(STR_LOG_BTN<<1)
-    rcall UART_PRINT_FLASH
-    lds  r24, current_val_l
-    lds  r25, current_val_h
-    rcall UART_PRINT_INT16
-    rcall UART_CRLF
-    ret
-
-LOG_SUCCESS:
-    ldi  ZL, low(STR_LOG_OK<<1)
-    ldi  ZH, high(STR_LOG_OK<<1)
-    rcall UART_PRINT_FLASH
-    rcall UART_CRLF
-    ret
-
-LOG_FAIL:
-    ldi  ZL, low(STR_LOG_FAIL<<1)
-    ldi  ZH, high(STR_LOG_FAIL<<1)
-    rcall UART_PRINT_FLASH
-    lds  r24, fail_count
-    clr  r25
-    rcall UART_PRINT_INT16
-    ldi  r24, '/'
-    rcall UART_TX
-    ldi  r24, MAX_ATTEMPTS
-    clr  r25
-    rcall UART_PRINT_INT16
-    rcall UART_CRLF
-    ret
-
-LOG_LOCKOUT:
-    ldi  ZL, low(STR_LOG_LOCK<<1)
-    ldi  ZH, high(STR_LOG_LOCK<<1)
-    rcall UART_PRINT_FLASH
-    rcall UART_CRLF
-    ret
-
-LOG_CLOSE:
-    ldi  ZL, low(STR_LOG_CLOSE<<1)
-    ldi  ZH, high(STR_LOG_CLOSE<<1)
-    rcall UART_PRINT_FLASH
-    rcall UART_CRLF
-    ret
-
-; ===== Interrupts (ISR) =======================================================================
-
-; INT0 = BTN+2 - PD2
-ISR_INT0:
-    push tmp
-    in   tmp, SREG
-    push tmp
-    lds  tmp, debounce_ms
-    tst  tmp
-    brne INT0_SKIP
-    ldi  tmp, 50
-    sts  debounce_ms, tmp
-    ldi  btn_id, 1
-    ldi  btn_flag, 1
-INT0_SKIP:
-    pop  tmp
-    out  SREG, tmp
-    pop  tmp
-    reti
-
-; INT1 = BTN-2 - PD3
-ISR_INT1:
-    push tmp
-    in   tmp, SREG
-    push tmp
-    lds  tmp, debounce_ms
-    tst  tmp
-    brne INT1_SKIP
-    ldi  tmp, 50
-    sts  debounce_ms, tmp
-    ldi  btn_id, 2
-    ldi  btn_flag, 1
-INT1_SKIP:
-    pop  tmp
-    out  SREG, tmp
-    pop  tmp
-    reti
-
-; Timer2 Compare Match A 1 ms tick
-ISR_T2COMPA:
-    push tmp
-    in   tmp, SREG
-    push tmp
-    push r16
-
-    lds  tmp, debounce_ms
-    tst  tmp
-    breq T2_SKIP_DEBOUNCE
-    dec  tmp
-    sts  debounce_ms, tmp
-T2_SKIP_DEBOUNCE:
-
-    lds  tmp, ms_tick
-    inc  tmp
-    sts  ms_tick, tmp
-    brne T2_NO_CARRY
-    lds  tmp, ms_tick+1
-    inc  tmp
-    sts  ms_tick+1, tmp
-T2_NO_CARRY:
-
-    pop  r16
-    pop  tmp
-    out  SREG, tmp
-    pop  tmp
-    reti
-
-; ===== BUTTON POLLING & INPUT ========================================================================
-POLL_BUTTONS:
-    lds  tmp, debounce_ms
-    tst  tmp
-    brne POLL_EXIT
-    tst  btn_flag
-    brne POLL_EXIT
-
-; PIND (PD4-PD7)
-    in   tmp, PIND
-    lds  tmp2, poll_pind_prev
-    sts  poll_pind_prev, tmp
-    push tmp
-    com  tmp
-    and  tmp, tmp2
-    sbrc tmp, 4
-    rjmp POLL_BTN_PD4
-    sbrc tmp, 5
-    rjmp POLL_BTN_PD5
-    sbrc tmp, 6
-    rjmp POLL_BTN_PD6
-    sbrc tmp, 7
-    rjmp POLL_BTN_PD7
-    pop  tmp
-    rjmp POLL_PINB
-
-POLL_BTN_PD4:
-    pop  tmp
-    ldi  btn_id, 3
-    rjmp POLL_SET_FLAG
-POLL_BTN_PD5:
-    pop  tmp
-    ldi  btn_id, 4
-    rjmp POLL_SET_FLAG
-POLL_BTN_PD6:
-    pop  tmp
-    ldi  btn_id, 5
-    rjmp POLL_SET_FLAG
-POLL_BTN_PD7:
-    pop  tmp
-    ldi  btn_id, 6
-    rjmp POLL_SET_FLAG
-
-POLL_PINB:
-    in   tmp, PINB
-    lds  tmp2, poll_pinb_prev
-    sts  poll_pinb_prev, tmp
-    com  tmp
-    and  tmp, tmp2
-    sbrc tmp, 0
-    rjmp POLL_BTN_PB0
-    rjmp POLL_PINC
-
-POLL_BTN_PB0:
-    ldi  btn_id, 7
-    rjmp POLL_SET_FLAG
-
-POLL_PINC:
-    in   tmp, PINC
-    lds  tmp2, poll_pinc_prev
-    sts  poll_pinc_prev, tmp
-    com  tmp
-    and  tmp, tmp2
-    sbrc tmp, 0
-    rjmp POLL_BTN_PC0
-    sbrc tmp, 1
-    rjmp POLL_BTN_PC1
-    sbrc tmp, 2
-    rjmp POLL_BTN_PC2
-    ret
-
-POLL_BTN_PC0:
-    ldi  btn_id, 8
-    rjmp POLL_SET_FLAG
-POLL_BTN_PC1:
-    ldi  btn_id, 9
-    rjmp POLL_SET_FLAG
-POLL_BTN_PC2:
-    ldi  btn_id, 10
-    rjmp POLL_SET_FLAG
-
-POLL_SET_FLAG:
-    ldi  tmp, 50
-    sts  debounce_ms, tmp
-    ldi  btn_flag, 1
-
-POLL_EXIT:
-    ret
-
-; Button Handling
-HANDLE_BUTTON:
-    cpi  state, STATE_STANDBY
-    brne HB_CHK_INPUT
-    ldi  state, STATE_INPUT
-    clr  tmp
-    sts  current_val_l, tmp
-    sts  current_val_h, tmp
-    rcall SCREEN_INPUT
-    rjmp HB_DO_ARITH
-
-HB_CHK_INPUT:
-    cpi  state, STATE_INPUT
-    brne HB_CHK_OPEN
-    rjmp HB_DO_ARITH
-
-HB_CHK_OPEN:
-    cpi  state, STATE_OPEN
-    brne HB_LOCKOUT_CHK
-    cpi  btn_id, 10
-    breq HB_DO_CLEAR
-    ret
-
-HB_LOCKOUT_CHK:
-    ret
-
-HB_DO_ARITH:
-    cpi  btn_id, 9
-    breq HB_DO_CONFIRM
-    cpi  btn_id, 10
-    breq HB_DO_CLEAR
-
-    ldi  r24, 0
-    ldi  r25, 0
-
-    cpi  btn_id, 1
-    brne HB_CHK2
-    ldi  r24, 2
-    rjmp HB_ADD_DELTA
-
-HB_CHK2:
-    cpi  btn_id, 2
-    brne HB_CHK3
-    ldi  r24, low(-2)
-    ldi  r25, high(-2)
-    rjmp HB_ADD_DELTA
-
-HB_CHK3:
-    cpi  btn_id, 3
-    brne HB_CHK4
-    ldi  r24, 5
-    rjmp HB_ADD_DELTA
-
-HB_CHK4:
-    cpi  btn_id, 4
-    brne HB_CHK5
-    ldi  r24, low(-5)
-    ldi  r25, high(-5)
-    rjmp HB_ADD_DELTA
-
-HB_CHK5:
-    cpi  btn_id, 5
-    brne HB_CHK6
-    ldi  r24, 7
-    rjmp HB_ADD_DELTA
-
-HB_CHK6:
-    cpi  btn_id, 6
-    brne HB_CHK7
-    ldi  r24, low(-7)
-    ldi  r25, high(-7)
-    rjmp HB_ADD_DELTA
-
-HB_CHK7:
-    cpi  btn_id, 7
-    brne HB_CHK8
-    ldi  r24, 9
-    rjmp HB_ADD_DELTA
-
-HB_CHK8:
-    cpi  btn_id, 8
-    brne HB_DO_ARITH_END
-    ldi  r24, low(-9)
-    ldi  r25, high(-9)
-
-HB_ADD_DELTA:
-    lds  r22, current_val_l
-    lds  r23, current_val_h
-    add  r22, r24
-    adc  r23, r25
-    sts  current_val_l, r22
-    sts  current_val_h, r23
-    rcall SCREEN_INPUT
-    rcall LOG_BTN_PRESS
-
-HB_DO_ARITH_END:
-    ret
-
-HB_DO_CONFIRM:
-    lds  r22, current_val_l
-    lds  r23, current_val_h
-    lds  r24, target_val_l
-    lds  r25, target_val_h
-    cp   r22, r24
-    cpc  r23, r25
-    brne HB_WRONG
-
-    clr  tmp
-    sts  fail_count, tmp
-    rcall EEPROM_WRITE_FAILCNT
-    clr  tmp
-    ldi  tmp2, EE_LOCKOUT_FL
-    rcall EEPROM_WRITE_BYTE_R24
-    rcall SERVO_OPEN
-    ldi  state, STATE_OPEN
-    ldi  tmp, OPEN_SECS
-    sts  open_secs, tmp
-    clr  tmp
-    sts  ms_tick, tmp
-    sts  ms_tick+1, tmp
-    rcall SCREEN_OPEN
-    rcall LOG_SUCCESS
-    ret
-
-HB_WRONG:
-    lds  tmp, fail_count
-    inc  tmp
-    sts  fail_count, tmp
-    rcall EEPROM_WRITE_FAILCNT
-    rcall LOG_FAIL
-    cpi  tmp, MAX_ATTEMPTS
-    brsh HB_LOCKOUT
-    rcall SCREEN_WRONG
-    rcall DELAY_1S
-    ldi  state, STATE_STANDBY
-    rcall SCREEN_STANDBY
-    ret
-
-HB_LOCKOUT:
-    ldi  r24, 0xFF
-    ldi  tmp2, EE_LOCKOUT_FL
-    rcall EEPROM_WRITE_BYTE_R24
-    ldi  state, STATE_LOCKOUT
-    ldi  tmp, LOCKOUT_SECS
-    sts  lockout_secs, tmp
-    clr  tmp
-    sts  ms_tick, tmp
-    sts  ms_tick+1, tmp
-    rcall SCREEN_LOCKOUT
-    rcall LOG_LOCKOUT
-    ret
-
-HB_DO_CLEAR:
-    clr  tmp
-    sts  current_val_l, tmp
-    sts  current_val_h, tmp
-    ldi  state, STATE_STANDBY
-    rcall SCREEN_STANDBY
-    ret
-
-; 2ND TICK CHECK
-CHECK_SECOND_TICK:
-    cli
-    lds  r24, ms_tick
-    lds  r25, ms_tick+1
-    sei
-    cpi  r24, low(1000)
-    ldi  tmp, high(1000)
-    cpc  r25, tmp
-    brlo CST_EXIT
-
-    clr  tmp
-    cli
-    sts  ms_tick, tmp
-    sts  ms_tick+1, tmp
-    sei
-
-    cpi  state, STATE_OPEN
-    breq CST_OPEN
-    cpi  state, STATE_LOCKOUT
-    breq CST_LOCKOUT
-    ret
-
-CST_OPEN:
-    lds  tmp, open_secs
-    dec  tmp
-    sts  open_secs, tmp
-    tst  tmp
-    brne CST_OPEN_UPDATE
-    rcall SERVO_CLOSE
-    ldi  state, STATE_STANDBY
-    rcall SCREEN_STANDBY
-    rcall LOG_CLOSE
-    ret
-CST_OPEN_UPDATE:
-    rcall SCREEN_OPEN
-    ret
-
-CST_LOCKOUT:
-    lds  tmp, lockout_secs
-    dec  tmp
-    sts  lockout_secs, tmp
-    tst  tmp
-    brne CST_LOCK_UPDATE
-    clr  tmp
-    sts  fail_count, tmp
-    rcall EEPROM_WRITE_FAILCNT
-    clr  r24
-    ldi  tmp2, EE_LOCKOUT_FL
-    rcall EEPROM_WRITE_BYTE_R24
-    ldi  state, STATE_STANDBY
-    rcall SCREEN_STANDBY
-    ret
-CST_LOCK_UPDATE:
-    rcall SCREEN_LOCKOUT
-CST_EXIT:
-    ret
+; ===== END OF ARITH LOCK =======================================================================
