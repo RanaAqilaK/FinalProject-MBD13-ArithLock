@@ -40,5 +40,5 @@ Menjadi solusi low-cost yang meningkatkan keamanan keypad tradisional dengan cak
 - [x] Serial logging untuk interaksi (LOG_BTN_PRESS, LOG_SUCCESS, LOG_FAIL, LOG_LOCKOUT, LOG_CLOSE)
 - [x] ISR handlers (INT0, INT1, Timer2 compare)
 - [x] Polling dan button state machine (input aritmetika, confirm, clear)
-- [ ] Enable main runtime loop (ubah INIT_HALT jadi MAIN_LOOP)
+- [x] Enable main runtime loop (ubah INIT_HALT jadi MAIN_LOOP)
 - [ ] Verifikasi build dan uji hardware

@@ -216,7 +216,7 @@ RESET:
 
     rcall SCREEN_STANDBY
     sei
-    rjmp INIT_HALT
+    rjmp MAIN_LOOP
 
 INIT_LOCKOUT:
     ldi state, STATE_LOCKOUT
@@ -225,8 +225,11 @@ INIT_LOCKOUT:
     rcall SCREEN_LOCKOUT
     sei
 
-INIT_HALT:
-    rjmp INIT_HALT
+MAIN_LOOP:
+    rcall POLL_BUTTONS
+    rcall HANDLE_BUTTON
+    rcall CHECK_SECOND_TICK
+    rjmp MAIN_LOOP
 
 ; ===== EEPROM =======================================================================
 EEPROM_READ_TARGET:
