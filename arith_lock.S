@@ -78,8 +78,16 @@ lcd_line2:       .skip 17 ; buffer untuk baris kedua LCD
 ; ===== VECTOR TABLE =======================================================================
 .section .text
 .org 0x0000
-
     rjmp RESET          ; 0x00 RESET
+
+.org 0x0002
+    rjmp ISR_INT0       ; 0x02 INT0 (BTN +2)
+
+.org 0x0004
+    rjmp ISR_INT1       ; 0x04 INT1 (BTN -2)
+
+.org 0x0024
+    rjmp ISR_T2COMPA    ; 0x24 TIMER2 COMPA (1ms tick)
 
 
 ; ===== RESET / INIT =======================================================================
@@ -920,3 +928,310 @@ T2_NO_CARRY:
     out  SREG, tmp
     pop  tmp
     reti
+
+; ===== BUTTON POLLING & INPUT ========================================================================
+POLL_BUTTONS:
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne POLL_EXIT
+    tst  btn_flag
+    brne POLL_EXIT
+
+; PIND (PD4-PD7)
+    in   tmp, PIND
+    lds  tmp2, poll_pind_prev
+    sts  poll_pind_prev, tmp
+    push tmp
+    com  tmp
+    and  tmp, tmp2
+    sbrc tmp, 4
+    rjmp POLL_BTN_PD4
+    sbrc tmp, 5
+    rjmp POLL_BTN_PD5
+    sbrc tmp, 6
+    rjmp POLL_BTN_PD6
+    sbrc tmp, 7
+    rjmp POLL_BTN_PD7
+    pop  tmp
+    rjmp POLL_PINB
+
+POLL_BTN_PD4:
+    pop  tmp
+    ldi  btn_id, 3
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD5:
+    pop  tmp
+    ldi  btn_id, 4
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD6:
+    pop  tmp
+    ldi  btn_id, 5
+    rjmp POLL_SET_FLAG
+POLL_BTN_PD7:
+    pop  tmp
+    ldi  btn_id, 6
+    rjmp POLL_SET_FLAG
+
+POLL_PINB:
+    in   tmp, PINB
+    lds  tmp2, poll_pinb_prev
+    sts  poll_pinb_prev, tmp
+    com  tmp
+    and  tmp, tmp2
+    sbrc tmp, 0
+    rjmp POLL_BTN_PB0
+    rjmp POLL_PINC
+
+POLL_BTN_PB0:
+    ldi  btn_id, 7
+    rjmp POLL_SET_FLAG
+
+POLL_PINC:
+    in   tmp, PINC
+    lds  tmp2, poll_pinc_prev
+    sts  poll_pinc_prev, tmp
+    com  tmp
+    and  tmp, tmp2
+    sbrc tmp, 0
+    rjmp POLL_BTN_PC0
+    sbrc tmp, 1
+    rjmp POLL_BTN_PC1
+    sbrc tmp, 2
+    rjmp POLL_BTN_PC2
+    ret
+
+POLL_BTN_PC0:
+    ldi  btn_id, 8
+    rjmp POLL_SET_FLAG
+POLL_BTN_PC1:
+    ldi  btn_id, 9
+    rjmp POLL_SET_FLAG
+POLL_BTN_PC2:
+    ldi  btn_id, 10
+    rjmp POLL_SET_FLAG
+
+POLL_SET_FLAG:
+    ldi  tmp, 50
+    sts  debounce_ms, tmp
+    ldi  btn_flag, 1
+
+POLL_EXIT:
+    ret
+
+; Button Handling
+HANDLE_BUTTON:
+    cpi  state, STATE_STANDBY
+    brne HB_CHK_INPUT
+    ldi  state, STATE_INPUT
+    clr  tmp
+    sts  current_val_l, tmp
+    sts  current_val_h, tmp
+    rcall SCREEN_INPUT
+    rjmp HB_DO_ARITH
+
+HB_CHK_INPUT:
+    cpi  state, STATE_INPUT
+    brne HB_CHK_OPEN
+    rjmp HB_DO_ARITH
+
+HB_CHK_OPEN:
+    cpi  state, STATE_OPEN
+    brne HB_LOCKOUT_CHK
+    cpi  btn_id, 10
+    breq HB_DO_CLEAR
+    ret
+
+HB_LOCKOUT_CHK:
+    ret
+
+HB_DO_ARITH:
+    cpi  btn_id, 9
+    breq HB_DO_CONFIRM
+    cpi  btn_id, 10
+    breq HB_DO_CLEAR
+
+    ldi  r24, 0
+    ldi  r25, 0
+
+    cpi  btn_id, 1
+    brne HB_CHK2
+    ldi  r24, 2
+    rjmp HB_ADD_DELTA
+
+HB_CHK2:
+    cpi  btn_id, 2
+    brne HB_CHK3
+    ldi  r24, low(-2)
+    ldi  r25, high(-2)
+    rjmp HB_ADD_DELTA
+
+HB_CHK3:
+    cpi  btn_id, 3
+    brne HB_CHK4
+    ldi  r24, 5
+    rjmp HB_ADD_DELTA
+
+HB_CHK4:
+    cpi  btn_id, 4
+    brne HB_CHK5
+    ldi  r24, low(-5)
+    ldi  r25, high(-5)
+    rjmp HB_ADD_DELTA
+
+HB_CHK5:
+    cpi  btn_id, 5
+    brne HB_CHK6
+    ldi  r24, 7
+    rjmp HB_ADD_DELTA
+
+HB_CHK6:
+    cpi  btn_id, 6
+    brne HB_CHK7
+    ldi  r24, low(-7)
+    ldi  r25, high(-7)
+    rjmp HB_ADD_DELTA
+
+HB_CHK7:
+    cpi  btn_id, 7
+    brne HB_CHK8
+    ldi  r24, 9
+    rjmp HB_ADD_DELTA
+
+HB_CHK8:
+    cpi  btn_id, 8
+    brne HB_DO_ARITH_END
+    ldi  r24, low(-9)
+    ldi  r25, high(-9)
+
+HB_ADD_DELTA:
+    lds  r22, current_val_l
+    lds  r23, current_val_h
+    add  r22, r24
+    adc  r23, r25
+    sts  current_val_l, r22
+    sts  current_val_h, r23
+    rcall SCREEN_INPUT
+    rcall LOG_BTN_PRESS
+
+HB_DO_ARITH_END:
+    ret
+
+HB_DO_CONFIRM:
+    lds  r22, current_val_l
+    lds  r23, current_val_h
+    lds  r24, target_val_l
+    lds  r25, target_val_h
+    cp   r22, r24
+    cpc  r23, r25
+    brne HB_WRONG
+
+    clr  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    clr  tmp
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_WRITE_BYTE_R24
+    rcall SERVO_OPEN
+    ldi  state, STATE_OPEN
+    ldi  tmp, OPEN_SECS
+    sts  open_secs, tmp
+    clr  tmp
+    sts  ms_tick, tmp
+    sts  ms_tick+1, tmp
+    rcall SCREEN_OPEN
+    rcall LOG_SUCCESS
+    ret
+
+HB_WRONG:
+    lds  tmp, fail_count
+    inc  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    rcall LOG_FAIL
+    cpi  tmp, MAX_ATTEMPTS
+    brsh HB_LOCKOUT
+    rcall SCREEN_WRONG
+    rcall DELAY_1S
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+
+HB_LOCKOUT:
+    ldi  r24, 0xFF
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_WRITE_BYTE_R24
+    ldi  state, STATE_LOCKOUT
+    ldi  tmp, LOCKOUT_SECS
+    sts  lockout_secs, tmp
+    clr  tmp
+    sts  ms_tick, tmp
+    sts  ms_tick+1, tmp
+    rcall SCREEN_LOCKOUT
+    rcall LOG_LOCKOUT
+    ret
+
+HB_DO_CLEAR:
+    clr  tmp
+    sts  current_val_l, tmp
+    sts  current_val_h, tmp
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+
+; 2ND TICK CHECK
+CHECK_SECOND_TICK:
+    cli
+    lds  r24, ms_tick
+    lds  r25, ms_tick+1
+    sei
+    cpi  r24, low(1000)
+    ldi  tmp, high(1000)
+    cpc  r25, tmp
+    brlo CST_EXIT
+
+    clr  tmp
+    cli
+    sts  ms_tick, tmp
+    sts  ms_tick+1, tmp
+    sei
+
+    cpi  state, STATE_OPEN
+    breq CST_OPEN
+    cpi  state, STATE_LOCKOUT
+    breq CST_LOCKOUT
+    ret
+
+CST_OPEN:
+    lds  tmp, open_secs
+    dec  tmp
+    sts  open_secs, tmp
+    tst  tmp
+    brne CST_OPEN_UPDATE
+    rcall SERVO_CLOSE
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    rcall LOG_CLOSE
+    ret
+CST_OPEN_UPDATE:
+    rcall SCREEN_OPEN
+    ret
+
+CST_LOCKOUT:
+    lds  tmp, lockout_secs
+    dec  tmp
+    sts  lockout_secs, tmp
+    tst  tmp
+    brne CST_LOCK_UPDATE
+    clr  tmp
+    sts  fail_count, tmp
+    rcall EEPROM_WRITE_FAILCNT
+    clr  r24
+    ldi  tmp2, EE_LOCKOUT_FL
+    rcall EEPROM_WRITE_BYTE_R24
+    ldi  state, STATE_STANDBY
+    rcall SCREEN_STANDBY
+    ret
+CST_LOCK_UPDATE:
+    rcall SCREEN_LOCKOUT
+CST_EXIT:
+    ret
