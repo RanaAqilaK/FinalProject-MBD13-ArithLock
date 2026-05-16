@@ -31,19 +31,14 @@ Menjadi solusi low-cost yang meningkatkan keamanan keypad tradisional dengan cak
 - EEPROM: simpan `target` dan `failcount`; baca di startup, tulis saat terjadi perubahan penting.
 - SPI/I2C: gunakan TWI atau SPI untuk komunikasi ke LCD (pilih driver yang tersedia).
 
-## To Do
+## To Do (Commit Plan)
 
-- [x] Implementasi init hardware
-- [x] Def parameter dan memory map
-- [x] Set button mapping (2, 5, 7, 9)
-- [x] Add EEPROM helpers
-- [x] Set target value default (97)
-- [ ] Implementasi logika input aritmatika (configurable step values)
-- [ ] Implementasi serial logging untuk interaksi
-- [ ] Implementasi LCD visual feedback dan integrasi dengan TWI/SPI driver
-- [ ] Implementasi ISR handlers untuk input dan debounce
-- [ ] Implementasi timer lockout dan countdown display
-- [ ] Implementasi PWM servo untuk `OPEN`
-- [ ] Implementasi FSM dan main runtime loop
-- [ ] Verifikasi hasil build dan hardware tests
-- [ ] Verifikasi EEPROM persistance untuk `target` & `failcount`
+- [x] Inisialisasi hardware (GPIO, UART, Timer, Interrupt, TWI, SRAM)
+- [x] Helper EEPROM (read/write target dan fail count)
+- [x] Delay functions dan string boot
+- [x] LCD init dan screen helpers (STANDBY, INPUT, OPEN, LOCKOUT, WRONG)
+- [ ] Serial logging untuk interaksi (LOG_BTN_PRESS, LOG_SUCCESS, LOG_FAIL, LOG_LOCKOUT, LOG_CLOSE)
+- [ ] ISR handlers (INT0, INT1, Timer2 compare)
+- [ ] Polling dan button state machine (input aritmetika, confirm, clear)
+- [ ] Enable main runtime loop (ubah INIT_HALT jadi MAIN_LOOP)
+- [ ] Verifikasi build dan uji hardware

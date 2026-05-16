@@ -278,3 +278,447 @@ EE_WB_WAIT:
     sbi  EECR, EEPE
     sei
     ret
+
+; ===== Delay ========================================================================
+DELAY_1US_x5:
+    ldi  tmp, 26
+DLY_1US5_LOOP:
+    dec  tmp
+    brne DLY_1US5_LOOP
+    ret
+
+DELAY_50US:
+    ldi  r21, 200
+DLY_50US_LOOP:
+    dec  r21
+    brne DLY_50US_LOOP
+    ret
+
+DELAY_1MS:
+    ldi  r21, 255
+DLY_1MS_LOOP:
+    ldi  r20, 31
+DLY_1MS_INNER:
+    dec  r20
+    brne DLY_1MS_INNER
+    dec  r21
+    brne DLY_1MS_LOOP
+    ret
+
+DELAY_2MS:
+    rcall DELAY_1MS
+    rcall DELAY_1MS
+    ret
+
+DELAY_5MS:
+    ldi  tmp, 5
+DLY_5MS_LOOP:
+    rcall DELAY_1MS
+    dec  tmp
+    brne DLY_5MS_LOOP
+    ret
+
+DELAY_50MS:
+    ldi  tmp, 50
+DLY_50MS_LOOP:
+    rcall DELAY_1MS
+    dec  tmp
+    brne DLY_50MS_LOOP
+    ret
+
+DELAY_100MS:
+    rcall DELAY_50MS
+    rcall DELAY_50MS
+    ret
+
+DELAY_1S:
+    ldi  tmp, 10
+DLY_1S_LOOP:
+    rcall DELAY_100MS
+    dec  tmp
+    brne DLY_1S_LOOP
+    ret
+
+; ===== STRINGS ======================================================================= 
+STR_BOOT:     .asciz "ARITH LOCK BOOT\r\n"
+STR_STANDBY1: .asciz "  ARITH  LOCK  "
+STR_STANDBY2: .asciz " Press any key "
+STR_VAL:      .asciz "Val: "
+STR_DIST:     .asciz "Dist:"
+STR_OPEN1:    .asciz "*** OPEN ***   "
+STR_OPEN2:    .asciz "Closing in: "
+STR_WRONG1:   .asciz "!! WRONG VALUE  "
+STR_WRONG2:   .asciz "Attempts left: "
+STR_LOCK1:    .asciz "** LOCKED OUT **"
+STR_LOCK2:    .asciz "Wait: "
+STR_LOG_BTN:  .asciz "[BTN] CurVal="
+STR_LOG_OK:   .asciz "[AUTH] SUCCESS - OPEN"
+STR_LOG_FAIL: .asciz "[AUTH] FAIL attempt "
+STR_LOG_LOCK: .asciz "[AUTH] LOCKOUT TRIGGERED"
+STR_LOG_CLOSE:.asciz "[DOOR] CLOSED"
+
+
+; ===== SERVO ========================================================================
+SERVO_OPEN:
+    ldi  tmp, high(SERVO_OPEN)
+    sts  OCR1AH, tmp
+    ldi  tmp, low(SERVO_OPEN)
+    sts  OCR1AL, tmp
+    ret
+
+SERVO_CLOSE:
+    ldi  tmp, high(SERVO_LOCKED)
+    sts  OCR1AH, tmp
+    ldi  tmp, low(SERVO_LOCKED)
+    sts  OCR1AL, tmp
+    ret
+
+; ===== LCD/TWI ======================================================================
+TWI_START:
+    ldi  tmp, (1<<TWINT)|(1<<TWSTA)|(1<<TWEN)
+    sts  TWCR, tmp
+TWI_WAIT_S:
+    lds  tmp, TWCR
+    sbrs tmp, TWINT
+    rjmp TWI_WAIT_S
+    ret
+
+TWI_STOP:
+    ldi  tmp, (1<<TWINT)|(1<<TWSTO)|(1<<TWEN)
+    sts  TWCR, tmp
+    ret
+
+TWI_WRITE:
+    sts  TWDR, r24
+    ldi  tmp, (1<<TWINT)|(1<<TWEN)
+    sts  TWCR, tmp
+TWI_WAIT_W:
+    lds  tmp, TWCR
+    sbrs tmp, TWINT
+    rjmp TWI_WAIT_W
+    lds  r25, TWSR
+    andi r25, 0xF8
+    ret
+
+LCD_SEND_RAW:
+    push r24
+    rcall TWI_START
+    ldi  r24, (LCD_ADDR<<1)
+    rcall TWI_WRITE
+    pop  r24
+    ori  r24, LCD_BL
+    rcall TWI_WRITE
+    rcall TWI_STOP
+    ret
+
+LCD_PULSE_EN:
+    push r24
+    ori  r24, LCD_EN
+    rcall LCD_SEND_RAW
+    rcall DELAY_1US_x5
+    pop  r24
+    andi r24, 0xFB
+    rcall LCD_SEND_RAW
+    rcall DELAY_1US_x5
+    ret
+
+LCD_SEND_NIBBLE:
+    push r24
+    push r23
+    andi r24, 0xF0
+    andi r23, 0x01
+    or   r24, r23
+    rcall LCD_PULSE_EN
+    pop  r23
+    pop  r24
+    ret
+
+LCD_SEND_BYTE:
+    push r24
+    push r23
+    rcall LCD_SEND_NIBBLE
+    pop  r23
+    pop  r24
+    push r24
+    push r23
+    swap r24
+    andi r24, 0xF0
+    andi r23, 0x01
+    or   r24, r23
+    rcall LCD_PULSE_EN
+    pop  r23
+    pop  r24
+    rcall DELAY_50US
+    ret
+
+LCD_CMD:
+    clr  r23
+    rcall LCD_SEND_BYTE
+    ret
+
+LCD_DATA:
+    ldi  r23, 1
+    rcall LCD_SEND_BYTE
+    ret
+
+LCD_INIT:
+    rcall DELAY_50MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_5MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_5MS
+    ldi  r24, 0x30
+    rcall LCD_PULSE_EN
+    rcall DELAY_1MS
+    ldi  r24, 0x20
+    rcall LCD_PULSE_EN
+    rcall DELAY_1MS
+    ldi  r24, 0x28
+    rcall LCD_CMD
+    ldi  r24, 0x0C
+    rcall LCD_CMD
+    ldi  r24, 0x06
+    rcall LCD_CMD
+    ret
+
+LCD_CLEAR:
+    ldi  r24, 0x01
+    rcall LCD_CMD
+    rcall DELAY_2MS
+    ret
+
+LCD_SET_CURSOR:
+    cpi  r24, 1
+    brne LCD_SET_ROW0
+    ori  r25, 0x40
+LCD_SET_ROW0:
+    ori  r25, 0x80
+    mov  r24, r25
+    rcall LCD_CMD
+    ret
+
+LCD_PRINT_SRAM:
+LCD_PRINT_SRAM_LOOP:
+    ld   r24, Z+
+    tst  r24
+    breq LCD_PRINT_SRAM_END
+    rcall LCD_DATA
+    rjmp LCD_PRINT_SRAM_LOOP
+LCD_PRINT_SRAM_END:
+    ret
+
+LCD_PRINT_FLASH:
+LCD_PRINT_FLASH_LOOP:
+    lpm  r24, Z+
+    tst  r24
+    breq LCD_PRINT_FLASH_END
+    rcall LCD_DATA
+    rjmp LCD_PRINT_FLASH_LOOP
+LCD_PRINT_FLASH_END:
+    ret
+
+; ===== SCREEN FUNC ==============================================================
+SCREEN_STANDBY:
+    rcall LCD_CLEAR
+    ldi  ZL, low(STR_STANDBY1<<1)
+    ldi  ZH, high(STR_STANDBY1<<1)
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    rcall LCD_PRINT_FLASH
+    ldi  ZL, low(STR_STANDBY2<<1)
+    ldi  ZH, high(STR_STANDBY2<<1)
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    rcall LCD_PRINT_FLASH
+    ret
+
+SCREEN_INPUT:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_VAL<<1)
+    ldi  ZH, high(STR_VAL<<1)
+    rcall LCD_PRINT_FLASH
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    rcall LCD_PRINT_INT16
+
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_DIST<<1)
+    ldi  ZH, high(STR_DIST<<1)
+    rcall LCD_PRINT_FLASH
+
+    lds  r22, target_val_l
+    lds  r23, target_val_h
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    sub  r22, r24
+    sbc  r23, r25
+    tst  r23
+    brpl SI_POS
+    com  r22
+    com  r23
+    ldi  tmp, 1
+    add  r22, tmp
+    adc  r23, r25
+SI_POS:
+    mov  r24, r22
+    mov  r25, r23
+    rcall LCD_PRINT_INT16
+    ret
+
+SCREEN_OPEN:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_OPEN1<<1)
+    ldi  ZH, high(STR_OPEN1<<1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_OPEN2<<1)
+    ldi  ZH, high(STR_OPEN2<<1)
+    rcall LCD_PRINT_FLASH
+    lds  r24, open_secs
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ldi  r24, 's'
+    rcall LCD_DATA
+    ret
+
+SCREEN_WRONG:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_WRONG1<<1)
+    ldi  ZH, high(STR_WRONG1<<1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_WRONG2<<1)
+    ldi  ZH, high(STR_WRONG2<<1)
+    rcall LCD_PRINT_FLASH
+    ldi  tmp, MAX_ATTEMPTS
+    lds  r24, fail_count
+    sub  tmp, r24
+    mov  r24, tmp
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ret
+
+SCREEN_LOCKOUT:
+    rcall LCD_CLEAR
+    clr  r24
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_LOCK1<<1)
+    ldi  ZH, high(STR_LOCK1<<1)
+    rcall LCD_PRINT_FLASH
+    ldi  r24, 1
+    clr  r25
+    rcall LCD_SET_CURSOR
+    ldi  ZL, low(STR_LOCK2<<1)
+    ldi  ZH, high(STR_LOCK2<<1)
+    rcall LCD_PRINT_FLASH
+    lds  r24, lockout_secs
+    clr  r25
+    rcall LCD_PRINT_INT16
+    ldi  r24, 's'
+    rcall LCD_DATA
+    ret
+
+; ===== UTILS =======================================================================
+LCD_PRINT_INT16:
+    push r16
+    push r17
+    push r18
+    push r19
+    push r20
+    push r21
+
+    mov  r20, r24
+    mov  r21, r25
+
+    tst  r21
+    brpl PI16_POS
+    ldi  r24, '-'
+    rcall LCD_DATA
+    com  r20
+    com  r21
+    ldi  r24, 1
+    add  r20, r24
+    clr  r24
+    adc  r21, r24
+
+PI16_POS:
+    clr  r16
+    ldi  r17, 0
+
+    tst  r20
+    brne PI16_DIVLOOP
+    tst  r21
+    brne PI16_DIVLOOP
+    ldi  r24, '0'
+    rcall LCD_DATA
+    rjmp PI16_DONE
+
+PI16_DIVLOOP:
+    rcall DIV16_BY10
+    ldi  r24, '0'
+    add  r24, r18
+    push r24
+    inc  r16
+    tst  r20
+    brne PI16_DIVLOOP
+    tst  r21
+    brne PI16_DIVLOOP
+
+PI16_PRINT:
+    tst  r16
+    breq PI16_DONE
+    pop  r24
+    rcall LCD_DATA
+    dec  r16
+    rjmp PI16_PRINT
+
+PI16_DONE:
+    pop  r21
+    pop  r20
+    pop  r19
+    pop  r18
+    pop  r17
+    pop  r16
+    ret
+
+; Div r21:r20 by 10 (unsigned)
+; Result: r21:r20 = quotient, r18 = remainder
+DIV16_BY10:
+    push r22
+    push r23
+    clr  r18
+    ldi  r22, 16
+DIV10_LOOP:
+    lsl  r20
+    rol  r21
+    rol  r18
+    cpi  r18, 10
+    brlo DIV10_NOSUB
+    subi r18, 10
+    ori  r20, 1
+DIV10_NOSUB:
+    dec  r22
+    brne DIV10_LOOP
+    pop  r23
+    pop  r22
+    ret
