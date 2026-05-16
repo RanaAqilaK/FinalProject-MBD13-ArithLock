@@ -38,7 +38,7 @@ Menjadi solusi low-cost yang meningkatkan keamanan keypad tradisional dengan cak
 - [x] Delay functions dan string boot
 - [x] LCD init dan screen helpers (STANDBY, INPUT, OPEN, LOCKOUT, WRONG)
 - [x] Serial logging untuk interaksi (LOG_BTN_PRESS, LOG_SUCCESS, LOG_FAIL, LOG_LOCKOUT, LOG_CLOSE)
-- [ ] ISR handlers (INT0, INT1, Timer2 compare)
+- [x] ISR handlers (INT0, INT1, Timer2 compare)
 - [ ] Polling dan button state machine (input aritmetika, confirm, clear)
 - [ ] Enable main runtime loop (ubah INIT_HALT jadi MAIN_LOOP)
 - [ ] Verifikasi build dan uji hardware

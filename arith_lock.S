@@ -853,3 +853,70 @@ LOG_CLOSE:
     rcall UART_PRINT_FLASH
     rcall UART_CRLF
     ret
+
+; ===== Interrupts (ISR) =======================================================================
+
+; INT0 = BTN+2 - PD2
+ISR_INT0:
+    push tmp
+    in   tmp, SREG
+    push tmp
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne INT0_SKIP
+    ldi  tmp, 50
+    sts  debounce_ms, tmp
+    ldi  btn_id, 1
+    ldi  btn_flag, 1
+INT0_SKIP:
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
+
+; INT1 = BTN-2 - PD3
+ISR_INT1:
+    push tmp
+    in   tmp, SREG
+    push tmp
+    lds  tmp, debounce_ms
+    tst  tmp
+    brne INT1_SKIP
+    ldi  tmp, 50
+    sts  debounce_ms, tmp
+    ldi  btn_id, 2
+    ldi  btn_flag, 1
+INT1_SKIP:
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
+
+; Timer2 Compare Match A 1 ms tick
+ISR_T2COMPA:
+    push tmp
+    in   tmp, SREG
+    push tmp
+    push r16
+
+    lds  tmp, debounce_ms
+    tst  tmp
+    breq T2_SKIP_DEBOUNCE
+    dec  tmp
+    sts  debounce_ms, tmp
+T2_SKIP_DEBOUNCE:
+
+    lds  tmp, ms_tick
+    inc  tmp
+    sts  ms_tick, tmp
+    brne T2_NO_CARRY
+    lds  tmp, ms_tick+1
+    inc  tmp
+    sts  ms_tick+1, tmp
+T2_NO_CARRY:
+
+    pop  r16
+    pop  tmp
+    out  SREG, tmp
+    pop  tmp
+    reti
