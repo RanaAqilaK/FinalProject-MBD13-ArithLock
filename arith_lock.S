@@ -722,3 +722,134 @@ DIV10_NOSUB:
     pop  r23
     pop  r22
     ret
+
+; ===== UART ========================================================================
+UART_TX:
+    lds  tmp, UCSR0A
+    sbrs tmp, UDRE0
+    rjmp UART_TX
+    sts  UDR0, r24
+    ret
+
+UART_PRINT_FLASH:
+    lpm  r24, Z+
+    tst  r24
+    breq UART_PRINT_FLASH_END
+    rcall UART_TX
+    rjmp UART_PRINT_FLASH
+UART_PRINT_FLASH_END:
+    ret
+
+UART_PRINT_SRAM:
+    ld   r24, Z+
+    tst  r24
+    breq UART_PRINT_SRAM_END
+    rcall UART_TX
+    rjmp UART_PRINT_SRAM
+UART_PRINT_SRAM_END:
+    ret
+
+UART_PRINT_INT16:
+    push r20
+    push r21
+    push r16
+    mov  r20, r24
+    mov  r21, r25
+    tst  r21
+    brpl UART_PI16_POS
+    ldi  r24, '-'
+    rcall UART_TX
+    com  r20
+    com  r21
+    ldi  r24, 1
+    add  r20, r24
+    clr  r24
+    adc  r21, r24
+UART_PI16_POS:
+    clr  r16
+    tst  r20
+    brne UART_PI16_LOOP
+    tst  r21
+    brne UART_PI16_LOOP
+    ldi  r24, '0'
+    rcall UART_TX
+    pop  r16
+    pop  r21
+    pop  r20
+    ret
+UART_PI16_LOOP:
+    rcall DIV16_BY10
+    ldi  r24, '0'
+    add  r24, r18
+    push r24
+    inc  r16
+    tst  r20
+    brne UART_PI16_LOOP
+    tst  r21
+    brne UART_PI16_LOOP
+UART_PI16_PRINT:
+    tst  r16
+    breq UART_PI16_DONE
+    pop  r24
+    rcall UART_TX
+    dec  r16
+    rjmp UART_PI16_PRINT
+UART_PI16_DONE:
+    pop  r16
+    pop  r21
+    pop  r20
+    ret
+
+UART_CRLF:
+    ldi  r24, '\r'
+    rcall UART_TX
+    ldi  r24, '\n'
+    rcall UART_TX
+    ret
+
+; ===== LOGGING =======================================================================
+LOG_BTN_PRESS:
+    ldi  ZL, low(STR_LOG_BTN<<1)
+    ldi  ZH, high(STR_LOG_BTN<<1)
+    rcall UART_PRINT_FLASH
+    lds  r24, current_val_l
+    lds  r25, current_val_h
+    rcall UART_PRINT_INT16
+    rcall UART_CRLF
+    ret
+
+LOG_SUCCESS:
+    ldi  ZL, low(STR_LOG_OK<<1)
+    ldi  ZH, high(STR_LOG_OK<<1)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
+
+LOG_FAIL:
+    ldi  ZL, low(STR_LOG_FAIL<<1)
+    ldi  ZH, high(STR_LOG_FAIL<<1)
+    rcall UART_PRINT_FLASH
+    lds  r24, fail_count
+    clr  r25
+    rcall UART_PRINT_INT16
+    ldi  r24, '/'
+    rcall UART_TX
+    ldi  r24, MAX_ATTEMPTS
+    clr  r25
+    rcall UART_PRINT_INT16
+    rcall UART_CRLF
+    ret
+
+LOG_LOCKOUT:
+    ldi  ZL, low(STR_LOG_LOCK<<1)
+    ldi  ZH, high(STR_LOG_LOCK<<1)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
+
+LOG_CLOSE:
+    ldi  ZL, low(STR_LOG_CLOSE<<1)
+    ldi  ZH, high(STR_LOG_CLOSE<<1)
+    rcall UART_PRINT_FLASH
+    rcall UART_CRLF
+    ret
